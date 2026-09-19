@@ -5,9 +5,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -16,6 +20,8 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.speech.tts.TextToSpeech
+import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.background
@@ -26,8 +32,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,6 +42,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,7 +52,11 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.savedstate.*
 import com.example.autotranslator.data.ServiceLocator
 import com.example.autotranslator.ui.theme.*
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.*
+import java.nio.ByteBuffer
 
 class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 
@@ -71,16 +81,27 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
 
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
+    private val originalTextState = mutableStateOf("")
     private val translatedTextState = mutableStateOf("Ready to translate...")
     private val isPanelVisibleState = mutableStateOf(false)
     private val bubbleSizeState = mutableIntStateOf(64)
     private val opacityState = mutableIntStateOf(85)
     private val fontScaleState = mutableIntStateOf(16)
+    private val targetLanguageState = mutableStateOf("Thai (ไทย)")
+    private val isPinnedState = mutableStateOf(false)
+    private val ocrActiveZoneState = mutableStateOf("Lower 60%")
+
+    private var mediaProjection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private var ocrJob: Job? = null
+    private var tts: TextToSpeech? = null
 
     private val textReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val text = intent?.getStringExtra(ScreenAccessibilityService.EXTRA_TEXT) ?: return
-            if (isPanelVisibleState.value) {
+            if (isPanelVisibleState.value && text != originalTextState.value) {
                 translateText(text)
             }
         }
@@ -103,6 +124,12 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
 
         showFloatingBubble()
         showTranslationPanel()
+        
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                // Initialized
+            }
+        }
     }
 
     private fun loadSettings() {
@@ -115,6 +142,9 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         }
         scope.launch {
             settings.getFontScale().collect { fontScaleState.intValue = it }
+        }
+        scope.launch {
+            settings.getTargetLanguage().collect { targetLanguageState.value = it }
         }
     }
 
@@ -131,10 +161,13 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 val data = intent.getParcelableExtra<Intent>(EXTRA_DATA)
                 if (resultCode != 0 && data != null) {
-                    startForeground(1, createNotification())
-                    // Here you would also initialize MediaProjection if needed
-                } else {
-                    // Fallback or error handling
+                    val notification = createNotification()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+                    } else {
+                        startForeground(1, notification)
+                    }
+                    initMediaProjection(resultCode, data)
                 }
             }
             ACTION_STOP -> {
@@ -143,6 +176,81 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             }
         }
         return START_STICKY
+    }
+
+    private fun initMediaProjection(resultCode: Int, data: Intent) {
+        val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjection = mpManager.getMediaProjection(resultCode, data)
+        
+        val metrics = resources.displayMetrics
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        val density = metrics.densityDpi
+
+        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        virtualDisplay = mediaProjection?.createVirtualDisplay(
+            "ScreenCapture",
+            width, height, density,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader?.surface, null, null
+        )
+
+        startOcrLoop()
+    }
+
+    private fun startOcrLoop() {
+        ocrJob?.cancel()
+        ocrJob = scope.launch(Dispatchers.Default) {
+            while (isActive) {
+                if (isPanelVisibleState.value) {
+                    captureAndProcessFrame()
+                }
+                delay(2000) // Process every 2 seconds
+            }
+        }
+    }
+
+    private fun captureAndProcessFrame() {
+        val image = imageReader?.acquireLatestImage() ?: return
+        try {
+            val planes = image.planes
+            val buffer: ByteBuffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * image.width
+            
+            val fullBitmap = Bitmap.createBitmap(
+                image.width + rowPadding / pixelStride,
+                image.height, Bitmap.Config.ARGB_8888
+            )
+            fullBitmap.copyPixelsFromBuffer(buffer)
+            
+            // Crop to lower 60% as per mockup "OCR Active Zone: Lower 60%"
+            val cropHeight = (image.height * 0.6).toInt()
+            val cropTop = image.height - cropHeight
+            val croppedBitmap = Bitmap.createBitmap(fullBitmap, 0, cropTop, image.width, cropHeight)
+            
+            val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
+            recognizer.process(inputImage)
+                .addOnSuccessListener { visionText ->
+                    val text = visionText.text
+                    if (text.isNotBlank()) {
+                        scope.launch(Dispatchers.Main) {
+                            if (text != originalTextState.value) {
+                                translateText(text)
+                            }
+                        }
+                    }
+                }
+            
+            fullBitmap.recycle()
+            // croppedBitmap will be recycled by InputImage or we can do it after process?
+            // Actually ML Kit doesn't recycle it immediately.
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            image.close()
+        }
     }
 
     private fun showFloatingBubble() {
@@ -211,6 +319,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private var translationJob: Job? = null
 
     private fun translateText(text: String) {
+        originalTextState.value = text
         translationJob?.cancel()
         translationJob = scope.launch(Dispatchers.IO) {
             val repository = ServiceLocator.provideTranslationRepository(this@OverlayTranslationService)
@@ -243,52 +352,185 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             setContent {
                 AutoTranslatorTheme {
                     val isVisible by remember { isPanelVisibleState }
+                    val originalText by remember { originalTextState }
                     val translatedText by remember { translatedTextState }
                     val opacity by remember { opacityState }
                     val fontScale by remember { fontScaleState }
+                    val targetLang by remember { targetLanguageState }
+                    val isPinned by remember { isPinnedState }
+                    val ocrActiveZone by remember { ocrActiveZoneState }
 
                     if (isVisible) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(16.dp)
-                                .shadow(16.dp, RoundedCornerShape(16.dp))
-                                .clip(RoundedCornerShape(16.dp))
+                                .shadow(16.dp, RoundedCornerShape(24.dp))
+                                .clip(RoundedCornerShape(24.dp))
                                 .background(Surface.copy(alpha = opacity / 100f))
-                                .border(1.dp, OutlineVariant, RoundedCornerShape(16.dp))
-                                .padding(16.dp)
+                                .border(1.dp, OutlineVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+                                .padding(20.dp)
                         ) {
                             Column {
+                                // Header
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = "LIVE TRANSLATION",
-                                        style = Typography.labelSmall,
-                                        color = Secondary,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    IconButton(
-                                        onClick = { isPanelVisibleState.value = false },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(SurfaceContainerHigh)
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("EN", style = Typography.labelSmall, color = OnSurfaceVariant)
+                                        }
                                         Icon(
-                                            imageVector = Icons.Default.Close,
-                                            contentDescription = "Close",
-                                            tint = OnSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
+                                            Icons.Default.ArrowForward,
+                                            contentDescription = null,
+                                            modifier = Modifier.padding(horizontal = 8.dp).size(14.dp),
+                                            tint = OnSurfaceVariant
                                         )
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Primary.copy(alpha = 0.2f))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(targetLang, style = Typography.labelSmall, color = Primary, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(onClick = { isPinnedState.value = !isPinned }, modifier = Modifier.size(32.dp)) {
+                                            Icon(
+                                                imageVector = Icons.Default.PushPin,
+                                                contentDescription = "Pin",
+                                                tint = if (isPinned) Primary else OnSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        IconButton(onClick = { }, modifier = Modifier.size(32.dp)) {
+                                            Icon(
+                                                imageVector = Icons.Default.OpenInFull,
+                                                contentDescription = "Expand",
+                                                tint = OnSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { isPanelVisibleState.value = false },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Close",
+                                                tint = OnSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = translatedText,
-                                    style = Typography.bodyLarge.copy(fontSize = fontScale.sp),
-                                    color = OnSurface,
-                                    fontWeight = FontWeight.Medium
-                                )
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                // Source Text
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Icon(
+                                        Icons.Default.GraphicEq,
+                                        contentDescription = null,
+                                        tint = Primary,
+                                        modifier = Modifier.size(18.dp).padding(top = 2.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = "“$originalText”",
+                                        style = Typography.bodyLarge.copy(
+                                            fontSize = fontScale.sp,
+                                            fontStyle = FontStyle.Italic
+                                        ),
+                                        color = OnSurface.copy(alpha = 0.8f)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                // Translated Text
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Spacer(modifier = Modifier.width(30.dp))
+                                    Text(
+                                        text = "“$translatedText”",
+                                        style = Typography.headlineSmall.copy(
+                                            fontSize = (fontScale + 2).sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = OnSurface
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                // Action Buttons
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Button(
+                                        onClick = { 
+                                            tts?.speak(translatedText, TextToSpeech.QUEUE_FLUSH, null, null)
+                                        },
+                                        modifier = Modifier.weight(1f).height(40.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = SurfaceContainerHigh),
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp)
+                                    ) {
+                                        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = OnSurface, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Listen (TTS)", style = Typography.labelMedium, color = OnSurface)
+                                    }
+                                    Button(
+                                        onClick = { 
+                                            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                                            val clip = ClipData.newPlainText("Translated Text", translatedText)
+                                            clipboard.setPrimaryClip(clip)
+                                        },
+                                        modifier = Modifier.weight(1f).height(40.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = SurfaceContainerHigh),
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp)
+                                    ) {
+                                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = OnSurface, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Copy", style = Typography.labelMedium, color = OnSurface)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                // Bottom Controls
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Tertiary))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = "OCR Active Zone: $ocrActiveZone",
+                                            style = Typography.labelSmall,
+                                            color = OnSurfaceVariant
+                                        )
+                                    }
+                                    
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("A-", style = Typography.labelMedium, color = OnSurfaceVariant)
+                                        Spacer(Modifier.width(12.dp))
+                                        Text("A+", style = Typography.labelMedium, color = Primary, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
                         }
                     }
@@ -325,6 +567,12 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         bubbleView?.let { windowManager.removeView(it) }
         panelView?.let { windowManager.removeView(it) }
         LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver)
+        ocrJob?.cancel()
+        recognizer.close()
+        tts?.stop()
+        tts?.shutdown()
+        mediaProjection?.stop()
+        virtualDisplay?.release()
         scope.cancel()
         super.onDestroy()
     }

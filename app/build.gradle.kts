@@ -57,6 +57,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.localbroadcastmanager)
+    implementation(libs.mlkit.text.recognition)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

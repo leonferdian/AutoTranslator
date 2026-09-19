@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -109,6 +110,14 @@ fun DashboardScreen() {
 
             // Engine Tiles
             item {
+                StatsRow()
+            }
+
+            item {
+                OcrToggles()
+            }
+
+            item {
                 EngineSection()
             }
 
@@ -179,6 +188,92 @@ fun DashboardScreen() {
 }
 
 @Composable
+fun StatsRow() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("19:42", style = Typography.labelSmall, color = OnSurface)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Speed, contentDescription = null, tint = Tertiary, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("120 FPS", style = Typography.labelSmall, color = Tertiary)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("PING 18ms", style = Typography.labelSmall, color = Primary)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.SignalCellularAlt, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("5G 98%", style = Typography.labelSmall, color = OnSurfaceVariant)
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Default.BatteryChargingFull, contentDescription = null, tint = Tertiary, modifier = Modifier.size(14.dp))
+        }
+    }
+    
+    Spacer(Modifier.height(12.dp))
+    
+    // Burst bar
+    Column {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainerHigh).padding(horizontal = 4.dp)) {
+                    Text("LV.85", style = Typography.labelSmall, color = OnSurfaceVariant, fontSize = 8.sp)
+                }
+                Spacer(Modifier.width(8.dp))
+                Text("BURST READY", style = Typography.labelSmall, color = OnSurfaceVariant, fontSize = 9.sp)
+            }
+            Text("100%", style = Typography.labelSmall, color = Tertiary, fontSize = 9.sp)
+        }
+        Spacer(Modifier.height(4.dp))
+        LinearProgressIndicator(
+            progress = 1f,
+            modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+            color = Primary,
+            trackColor = SurfaceContainerHighest
+        )
+    }
+}
+
+@Composable
+fun OcrToggles() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Button(
+            onClick = { },
+            modifier = Modifier.weight(1f).height(40.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SurfaceContainerHigh),
+            shape = RoundedCornerShape(20.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp)
+        ) {
+            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Tertiary))
+            Spacer(Modifier.width(8.dp))
+            Text("1.5 FLASH", style = Typography.labelMedium, color = OnSurface)
+        }
+        Button(
+            onClick = { },
+            modifier = Modifier.weight(1f).height(40.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Primary.copy(alpha = 0.2f)),
+            shape = RoundedCornerShape(20.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp)
+        ) {
+            Icon(Icons.Default.FlashOn, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Instant OCR", style = Typography.labelMedium, color = Primary, fontWeight = FontWeight.Bold)
+        }
+        IconButton(onClick = {}, modifier = Modifier.size(40.dp).clip(CircleShape).background(SurfaceContainerHigh)) {
+            Icon(Icons.Default.Mic, contentDescription = null, tint = OnSurfaceVariant)
+        }
+        IconButton(onClick = {}, modifier = Modifier.size(40.dp).clip(CircleShape).background(SurfaceContainerHigh)) {
+            Icon(Icons.Default.Pause, contentDescription = null, tint = OnSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 fun DashboardTopBar() {
     Row(
         modifier = Modifier
@@ -190,42 +285,28 @@ fun DashboardTopBar() {
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(SurfaceContainerHigh),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
-            }
+            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Primary, modifier = Modifier.size(24.dp))
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("Gemini Live", style = Typography.headlineSmall, color = OnSurface)
+                Text("Gemini Live", style = Typography.headlineSmall, color = OnSurface, fontWeight = FontWeight.Bold)
                 Text("Dashboard", style = Typography.labelSmall, color = Secondary)
             }
         }
         
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(SurfaceContainerLow)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Tertiary))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Live Active", style = Typography.labelSmall, color = Tertiary)
-                }
-            }
+            Switch(
+                checked = true,
+                onCheckedChange = {},
+                colors = SwitchDefaults.colors(checkedThumbColor = OnPrimary, checkedTrackColor = Primary)
+            )
+            Spacer(Modifier.width(12.dp))
+            Icon(Icons.Default.MoreVert, contentDescription = null, tint = OnSurfaceVariant)
             Spacer(Modifier.width(12.dp))
             Box(
-                modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary),
+                modifier = Modifier.size(32.dp).clip(CircleShape).background(SurfaceContainerHigh),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Person, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Person, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(18.dp))
             }
         }
     }
