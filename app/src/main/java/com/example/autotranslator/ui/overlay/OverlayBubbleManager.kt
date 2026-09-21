@@ -10,9 +10,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -28,7 +33,8 @@ class OverlayBubbleManager(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
     private val viewModelStoreOwner: ViewModelStoreOwner,
-    private val savedStateRegistryOwner: SavedStateRegistryOwner
+    private val savedStateRegistryOwner: SavedStateRegistryOwner,
+    private val engineName: String = "AI"
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val activeBubbles = mutableMapOf<Int, BubbleInstance>()
@@ -43,7 +49,7 @@ class OverlayBubbleManager(
         val bubble = activeBubbles[id]
         if (bubble != null) {
             bubble.textState.value = text
-            if (bubble.rect != rect) {
+            if (Math.abs(bubble.rect.top - rect.top) > 5 || Math.abs(bubble.rect.left - rect.left) > 5) {
                 updateViewLayout(bubble.view, rect)
                 activeBubbles[id] = bubble.copy(rect = Rect(rect))
             }
@@ -64,18 +70,25 @@ class OverlayBubbleManager(
                     val content by textState
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xCC1E1E1E))
-                            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color(0x99000000))
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
                     ) {
-                        Text(
-                            text = content,
-                            color = Color.Cyan,
-                            fontSize = 13.sp,
-                            lineHeight = 16.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "$engineName:",
+                                color = Color.Gray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Normal
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = content,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
@@ -109,8 +122,8 @@ class OverlayBubbleManager(
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = rect.left
-            y = rect.bottom + 4 // Positioned directly beneath source text
+            x = rect.left + 20 // Indent slightly like in the image
+            y = rect.bottom + 4 
         }
     }
 

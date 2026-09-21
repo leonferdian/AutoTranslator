@@ -73,6 +73,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private var bubbleView: ComposeView? = null
     private var panelView: ComposeView? = null
     private var hudView: ComposeView? = null
+    private var triggerView: ComposeView? = null
     private lateinit var bubbleManager: OverlayBubbleManager
 
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -174,6 +175,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         showFloatingBubble()
         showTranslationPanel()
         showFloatingHud()
+        showSideTrigger()
         
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -200,7 +202,16 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             settings.getSourceLanguage().collect { sourceLanguageState.value = it }
         }
         scope.launch {
-            settings.getTranslationEngine().collect { translationEngineState.value = it }
+            settings.getTranslationEngine().collect { 
+                translationEngineState.value = it
+                bubbleManager = OverlayBubbleManager(
+                    this@OverlayTranslationService, 
+                    this@OverlayTranslationService, 
+                    this@OverlayTranslationService, 
+                    this@OverlayTranslationService,
+                    engineName = if (it == "Gemini") "English AI" else "Google AI"
+                )
+            }
         }
     }
 
@@ -349,6 +360,63 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         }
     }
 
+    private fun showSideTrigger() {
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            x = 40
+        }
+
+        triggerView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@OverlayTranslationService)
+            setViewTreeViewModelStoreOwner(this@OverlayTranslationService)
+            setViewTreeSavedStateRegistryOwner(this@OverlayTranslationService)
+
+            setContent {
+                AutoTranslatorTheme {
+                    val engine by remember { translationEngineState }
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .shadow(12.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(Color(0xCC1E1E1E))
+                            .border(2.dp, if (engine == "Gemini") Color.Cyan else Color.Green, CircleShape)
+                            .clickable {
+                                isPanelVisibleState.value = !isPanelVisibleState.value
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (engine == "Gemini") "G" else "T",
+                            color = Color.White,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        // Active dot
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(Color.Green)
+                                .align(Alignment.TopEnd)
+                                .padding(2.dp)
+                        )
+                    }
+                }
+            }
+        }
+        windowManager.addView(triggerView, params)
+    }
+
     private fun showFloatingHud() {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -361,7 +429,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = 100 // Spacing from bottom
+            y = 60 // Closer to bottom like in image
         }
 
         hudView = ComposeView(this).apply {
@@ -377,44 +445,26 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                     
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(24.dp))
-                            .background(Color(0xBB000000))
-                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .clip(RoundedCornerShape(32.dp))
+                            .background(Color(0xAA000000))
+                            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(32.dp))
+                            .padding(horizontal = 20.dp, vertical = 10.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = "$engine AI: ${sourceLang.take(2).uppercase()} → ${targetLang.take(2).uppercase()} | Translating Screen",
                                 style = Typography.labelMedium,
-                                color = Color.White
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 13.sp
                             )
-                            Spacer(Modifier.width(12.dp))
-                            Box(Modifier.width(1.dp).height(16.dp).background(Color.White.copy(alpha = 0.3f)))
-                            Spacer(Modifier.width(12.dp))
+                            Spacer(Modifier.width(16.dp))
                             
-                            // Engine Quick Switch
-                            IconButton(
-                                onClick = { 
-                                    scope.launch {
-                                        val newEngine = if (engine == "Gemini") "Google Translate" else "Gemini"
-                                        ServiceLocator.provideAppSettings(this@OverlayTranslationService).setTranslationEngine(newEngine)
-                                    }
-                                },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (engine == "Gemini") Icons.Default.Bolt else Icons.Default.GTranslate,
-                                    contentDescription = "Switch Engine",
-                                    tint = Primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                            IconButton(onClick = {}, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                             }
-                            
-                            IconButton(onClick = {}, modifier = Modifier.size(24.dp)) {
-                                Icon(Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            }
-                            IconButton(onClick = {}, modifier = Modifier.size(24.dp)) {
-                                Icon(Icons.Default.Pause, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            IconButton(onClick = {}, modifier = Modifier.size(28.dp).background(Primary.copy(alpha = 0.2f), CircleShape)) {
+                                Icon(Icons.Default.Pause, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -792,6 +842,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         bubbleView?.let { windowManager.removeView(it) }
         panelView?.let { windowManager.removeView(it) }
         hudView?.let { windowManager.removeView(it) }
+        triggerView?.let { windowManager.removeView(it) }
         bubbleManager.clearAll()
         LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver)
         ocrJob?.cancel()
