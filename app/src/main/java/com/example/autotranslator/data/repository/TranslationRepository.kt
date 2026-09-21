@@ -5,34 +5,20 @@ import com.example.autotranslator.data.network.GeminiApiService
 import kotlinx.coroutines.flow.firstOrNull
 import java.io.IOException
 
-interface TranslationRepository {
-    suspend fun translateText(text: String): Result<String>
+enum class EngineType { GEMINI, GOOGLE }
+
+interface TranslationEngine {
+    suspend fun translate(text: String, sourceLang: String, targetLang: String): Result<String>
 }
 
-class TranslationRepositoryImpl(
+class GeminiTranslationEngine(
     private val apiService: GeminiApiService,
-    private val settingsProvider: AppSettingsProvider,
-) : TranslationRepository {
-
-    override suspend fun translateText(text: String): Result<String> {
-        val engine = settingsProvider.getTranslationEngine().firstOrNull() ?: "Gemini"
-        
-        return if (engine == "Gemini") {
-            translateWithGemini(text)
-        } else {
-            translateWithGoogle(text)
-        }
-    }
-
-    private suspend fun translateWithGemini(text: String): Result<String> {
+    private val settingsProvider: AppSettingsProvider
+) : TranslationEngine {
+    override suspend fun translate(text: String, sourceLang: String, targetLang: String): Result<String> {
         val apiKey = settingsProvider.getApiKey().firstOrNull() ?: ""
-        if (apiKey.isBlank()) {
-            return Result.failure(IllegalStateException("Gemini API key is not configured."))
-        }
+        if (apiKey.isBlank()) return Result.failure(IllegalStateException("Gemini API key missing"))
 
-        val sourceLang = settingsProvider.getSourceLanguage().firstOrNull() ?: "Auto-Detect"
-        val targetLang = settingsProvider.getTargetLanguage().firstOrNull() ?: "Thai (ไทย)"
-        
         val prompt = if (sourceLang == "Auto-Detect") {
             "Translate the provided text into $targetLang. "
         } else {
@@ -43,36 +29,52 @@ class TranslationRepositoryImpl(
             contents = listOf(Content(listOf(Part(text = text)))),
             systemInstruction = SystemInstruction(
                 parts = listOf(
-                    Part(
-                        text = "You are a live, ultra-fast translator. $prompt" +
-                               "Maintain chat/gaming slang, emotions, and shorthand terms contextually. " +
-                               "Do NOT add any introductions, explanations, or metadata. Output ONLY the raw translated text."
-                    )
+                    Part(text = "You are a live translator. $prompt Do NOT add intros. Output ONLY raw translated text.")
                 )
             ),
-            generationConfig = GenerationConfig(temperature = 0.2f)
+            generationConfig = GenerationConfig(temperature = 0.1f)
         )
 
         return try {
             val response = apiService.generateContent(apiKey, request)
             if (response.isSuccessful) {
                 val candidateText = response.body()?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                if (!candidateText.isNullOrBlank()) {
-                    Result.success(candidateText.trim())
-                } else {
-                    Result.failure(Exception("Empty translation response from Gemini API."))
-                }
-            } else {
-                Result.failure(IOException("API Error ${response.code()}: ${response.errorBody()?.string()}"))
-            }
+                if (!candidateText.isNullOrBlank()) Result.success(candidateText.trim())
+                else Result.failure(Exception("Empty Gemini response"))
+            } else Result.failure(IOException("Gemini API Error ${response.code()}"))
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
+}
 
-    private suspend fun translateWithGoogle(text: String): Result<String> {
-        // For now, let's use a public endpoint or just simulate it for the demo
-        // Real implementation would use Google Cloud Translation API
-        return Result.success("[Google Translate] $text (Mocked)")
+class GoogleTranslationEngine(
+    private val settingsProvider: AppSettingsProvider
+) : TranslationEngine {
+    override suspend fun translate(text: String, sourceLang: String, targetLang: String): Result<String> {
+        // Implementation for Google Cloud Translation REST API
+        // For now, simulating for the refactor structure
+        return Result.success("[Google] $text")
+    }
+}
+
+interface TranslationRepository {
+    suspend fun translateText(text: String): Result<String>
+}
+
+class TranslationRepositoryImpl(
+    private val geminiEngine: GeminiTranslationEngine,
+    private val googleEngine: GoogleTranslationEngine,
+    private val settingsProvider: AppSettingsProvider,
+) : TranslationRepository {
+
+    override suspend fun translateText(text: String): Result<String> {
+        val engineType = settingsProvider.getTranslationEngine().firstOrNull() ?: "Gemini"
+        val sourceLang = settingsProvider.getSourceLanguage().firstOrNull() ?: "Auto-Detect"
+        val targetLang = settingsProvider.getTargetLanguage().firstOrNull() ?: "Thai (ไทย)"
+
+        val engine = if (engineType == "Gemini") geminiEngine else googleEngine
+        
+        return engine.translate(text, sourceLang, targetLang)
     }
 }

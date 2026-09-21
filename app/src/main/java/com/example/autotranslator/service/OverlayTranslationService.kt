@@ -13,6 +13,7 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -51,6 +52,7 @@ import androidx.lifecycle.*
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.savedstate.*
 import com.example.autotranslator.data.ServiceLocator
+import com.example.autotranslator.ui.overlay.OverlayBubbleManager
 import com.example.autotranslator.ui.theme.*
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -70,6 +72,8 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private lateinit var windowManager: WindowManager
     private var bubbleView: ComposeView? = null
     private var panelView: ComposeView? = null
+    private var hudView: ComposeView? = null
+    private lateinit var bubbleManager: OverlayBubbleManager
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val store = ViewModelStore()
@@ -100,11 +104,53 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private var ocrJob: Job? = null
     private var tts: TextToSpeech? = null
 
+    private val translationCache = mutableMapOf<String, String>()
+
     private val textReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val text = intent?.getStringExtra(ScreenAccessibilityService.EXTRA_TEXT) ?: return
-            if (isPanelVisibleState.value && text != originalTextState.value) {
-                translateText(text)
+            val texts = intent?.getStringArrayListExtra(ScreenAccessibilityService.EXTRA_TEXT) ?: return
+            val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra(ScreenAccessibilityService.EXTRA_BOUNDS, Rect::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra(ScreenAccessibilityService.EXTRA_BOUNDS)
+            } ?: return
+
+            if (isPanelVisibleState.value) {
+                processExtractedNodes(texts, bounds as List<Rect>)
+            } else {
+                bubbleManager.clearAll()
+            }
+        }
+    }
+
+    private fun processExtractedNodes(texts: List<String>, bounds: List<Rect>) {
+        val activeIds = mutableSetOf<Int>()
+        texts.forEachIndexed { index, text ->
+            val rect = bounds[index]
+            // We use text + top position to identify a unique line, allows scrolling
+            val id = (text + rect.top.toString()).hashCode()
+            activeIds.add(id)
+            translateAndShowBubble(id, text, rect)
+        }
+        bubbleManager.removeBubblesNotIn(activeIds)
+    }
+
+    private fun translateAndShowBubble(id: Int, text: String, rect: Rect) {
+        val cached = translationCache[text]
+        if (cached != null) {
+            bubbleManager.updateBubble(id, cached, rect)
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val repository = ServiceLocator.provideTranslationRepository(this@OverlayTranslationService)
+            val result = repository.translateText(text)
+            withContext(Dispatchers.Main) {
+                result.onSuccess { translated ->
+                    translationCache[text] = translated
+                    bubbleManager.updateBubble(id, translated, rect)
+                }
             }
         }
     }
@@ -115,6 +161,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
 
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        bubbleManager = OverlayBubbleManager(this, this, this, this)
         
         loadSettings()
         registerTextReceiver()
@@ -126,6 +173,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
 
         showFloatingBubble()
         showTranslationPanel()
+        showFloatingHud()
         
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -278,27 +326,20 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             val fullBitmap = Bitmap.createBitmap(bitmapWidth, image.height, Bitmap.Config.ARGB_8888)
             fullBitmap.copyPixelsFromBuffer(buffer)
             
-            // Crop to lower 60%
-            val cropHeight = (image.height * 0.6).toInt()
-            val cropTop = image.height - cropHeight
+            val inputImage = InputImage.fromBitmap(fullBitmap, 0)
             
-            if (image.width > 0 && cropHeight > 0) {
-                val croppedBitmap = Bitmap.createBitmap(fullBitmap, 0, cropTop, image.width, cropHeight)
-                val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
-                
-                recognizer.process(inputImage)
-                    .addOnSuccessListener { visionText ->
-                        val text = visionText.text.trim()
-                        if (text.isNotBlank() && text != originalTextState.value) {
-                            scope.launch(Dispatchers.Main) {
-                                translateText(text)
-                            }
-                        }
+            recognizer.process(inputImage)
+                .addOnSuccessListener { visionText ->
+                    val activeIds = mutableSetOf<Int>()
+                    visionText.textBlocks.forEach { block ->
+                        val text = block.text
+                        val rect = block.boundingBox ?: return@forEach
+                        val id = (text + rect.top.toString()).hashCode()
+                        activeIds.add(id)
+                        translateAndShowBubble(id, text, rect)
                     }
-                    .addOnCompleteListener {
-                        croppedBitmap.recycle()
-                    }
-            }
+                    bubbleManager.removeBubblesNotIn(activeIds)
+                }
             
             fullBitmap.recycle()
         } catch (e: Exception) {
@@ -306,6 +347,81 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         } finally {
             image.close()
         }
+    }
+
+    private fun showFloatingHud() {
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = 100 // Spacing from bottom
+        }
+
+        hudView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@OverlayTranslationService)
+            setViewTreeViewModelStoreOwner(this@OverlayTranslationService)
+            setViewTreeSavedStateRegistryOwner(this@OverlayTranslationService)
+
+            setContent {
+                AutoTranslatorTheme {
+                    val engine by remember { translationEngineState }
+                    val sourceLang by remember { sourceLanguageState }
+                    val targetLang by remember { targetLanguageState }
+                    
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color(0xBB000000))
+                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "$engine AI: ${sourceLang.take(2).uppercase()} → ${targetLang.take(2).uppercase()} | Translating Screen",
+                                style = Typography.labelMedium,
+                                color = Color.White
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Box(Modifier.width(1.dp).height(16.dp).background(Color.White.copy(alpha = 0.3f)))
+                            Spacer(Modifier.width(12.dp))
+                            
+                            // Engine Quick Switch
+                            IconButton(
+                                onClick = { 
+                                    scope.launch {
+                                        val newEngine = if (engine == "Gemini") "Google Translate" else "Gemini"
+                                        ServiceLocator.provideAppSettings(this@OverlayTranslationService).setTranslationEngine(newEngine)
+                                    }
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (engine == "Gemini") Icons.Default.Bolt else Icons.Default.GTranslate,
+                                    contentDescription = "Switch Engine",
+                                    tint = Primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            
+                            IconButton(onClick = {}, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            }
+                            IconButton(onClick = {}, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Pause, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        windowManager.addView(hudView, params)
     }
 
     private fun showFloatingBubble() {
@@ -675,6 +791,8 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         bubbleView?.let { windowManager.removeView(it) }
         panelView?.let { windowManager.removeView(it) }
+        hudView?.let { windowManager.removeView(it) }
+        bubbleManager.clearAll()
         LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver)
         ocrJob?.cancel()
         recognizer.close()

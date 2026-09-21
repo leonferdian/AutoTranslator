@@ -2,10 +2,7 @@ package com.example.autotranslator.data
 
 import android.content.Context
 import com.example.autotranslator.data.network.GeminiApiService
-import com.example.autotranslator.data.repository.AppSettingsProvider
-import com.example.autotranslator.data.repository.AppSettingsProviderImpl
-import com.example.autotranslator.data.repository.TranslationRepository
-import com.example.autotranslator.data.repository.TranslationRepositoryImpl
+import com.example.autotranslator.data.repository.*
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -47,9 +44,12 @@ object ServiceLocator {
 
     fun provideTranslationRepository(context: Context): TranslationRepository {
         return translationRepository ?: synchronized(this) {
+            val settings = provideAppSettings(context)
+            val api = provideGeminiApi()
             val instance = TranslationRepositoryImpl(
-                provideGeminiApi(),
-                provideAppSettings(context)
+                GeminiTranslationEngine(api, settings),
+                GoogleTranslationEngine(settings),
+                settings
             )
             translationRepository = instance
             instance

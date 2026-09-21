@@ -16,6 +16,8 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
         private val TARGET_LANGUAGE = stringPreferencesKey("target_language")
         private val SOURCE_LANGUAGE = stringPreferencesKey("source_language")
         private val TRANSLATION_ENGINE = stringPreferencesKey("translation_engine")
+        private val FALLBACK_ENABLED = booleanPreferencesKey("fallback_enabled")
+        private val GOOGLE_API_KEY = stringPreferencesKey("google_api_key")
         private val BUBBLE_SIZE = intPreferencesKey("bubble_size")
         private val OPACITY = intPreferencesKey("opacity")
         private val FONT_SCALE = intPreferencesKey("font_scale")
@@ -39,6 +41,16 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
     override fun getTranslationEngine(): Flow<String> = context.dataStore.data.map { it[TRANSLATION_ENGINE] ?: "Gemini" }
     override suspend fun setTranslationEngine(engine: String) {
         context.dataStore.edit { it[TRANSLATION_ENGINE] = engine }
+    }
+
+    override fun getFallbackEnabled(): Flow<Boolean> = context.dataStore.data.map { it[FALLBACK_ENABLED] ?: false }
+    override suspend fun setFallbackEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[FALLBACK_ENABLED] = enabled }
+    }
+
+    override fun getGoogleApiKey(): Flow<String> = context.dataStore.data.map { it[GOOGLE_API_KEY] ?: "" }
+    override suspend fun setGoogleApiKey(apiKey: String) {
+        context.dataStore.edit { it[GOOGLE_API_KEY] = apiKey }
     }
 
     override fun getBubbleSize(): Flow<Int> = context.dataStore.data.map { it[BUBBLE_SIZE] ?: 64 }

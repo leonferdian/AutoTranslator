@@ -68,6 +68,8 @@ fun DashboardScreen() {
     val targetLanguage by settings.getTargetLanguage().collectAsState(initial = "Thai (ไทย)")
     val sourceLanguage by settings.getSourceLanguage().collectAsState(initial = "Auto-Detect")
     val translationEngine by settings.getTranslationEngine().collectAsState(initial = "Gemini")
+    val fallbackEnabled by settings.getFallbackEnabled().collectAsState(initial = false)
+    val googleApiKey by settings.getGoogleApiKey().collectAsState(initial = "")
     val bubbleSize by settings.getBubbleSize().collectAsState(initial = 64)
     val opacity by settings.getOpacity().collectAsState(initial = 85)
     val fontScale by settings.getFontScale().collectAsState(initial = 16)
@@ -111,7 +113,11 @@ fun DashboardScreen() {
                     targetLanguage = targetLanguage,
                     onTargetLanguageChange = { scope.launch { settings.setTargetLanguage(it) } },
                     translationEngine = translationEngine,
-                    onTranslationEngineChange = { scope.launch { settings.setTranslationEngine(it) } }
+                    onTranslationEngineChange = { scope.launch { settings.setTranslationEngine(it) } },
+                    fallbackEnabled = fallbackEnabled,
+                    onFallbackEnabledChange = { scope.launch { settings.setFallbackEnabled(it) } },
+                    googleApiKey = googleApiKey,
+                    onGoogleApiKeyChange = { scope.launch { settings.setGoogleApiKey(it) } }
                 )
             }
 
@@ -328,9 +334,14 @@ fun ApiSetupCard(
     targetLanguage: String,
     onTargetLanguageChange: (String) -> Unit,
     translationEngine: String,
-    onTranslationEngineChange: (String) -> Unit
+    onTranslationEngineChange: (String) -> Unit,
+    fallbackEnabled: Boolean,
+    onFallbackEnabledChange: (Boolean) -> Unit,
+    googleApiKey: String,
+    onGoogleApiKeyChange: (String) -> Unit
 ) {
     var isVisible by remember { mutableStateOf(false) }
+    var isGoogleVisible by remember { mutableStateOf(false) }
     var showSourceMenu by remember { mutableStateOf(false) }
     var showTargetMenu by remember { mutableStateOf(false) }
     var showEngineMenu by remember { mutableStateOf(false) }
@@ -382,29 +393,74 @@ fun ApiSetupCard(
             
             Spacer(Modifier.height(16.dp))
             
-            Text("${translationEngine.uppercase()} API CREDENTIALS", style = Typography.labelSmall, color = OnSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = onApiKeyChange,
+            if (translationEngine == "Gemini") {
+                Text("GEMINI API CREDENTIALS", style = Typography.labelSmall, color = OnSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = onApiKeyChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Enter Gemini API Key", style = Typography.labelMedium) },
+                    visualTransformation = if (isVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { isVisible = !isVisible }) {
+                            Icon(if (isVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null)
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = SurfaceContainer,
+                        unfocusedContainerColor = SurfaceContainer,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedBorderColor = Primary
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    textStyle = Typography.labelMedium
+                )
+            } else {
+                Text("GOOGLE TRANSLATE API CREDENTIALS", style = Typography.labelSmall, color = OnSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                
+                OutlinedTextField(
+                    value = googleApiKey,
+                    onValueChange = onGoogleApiKeyChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Enter Google API Key", style = Typography.labelMedium) },
+                    visualTransformation = if (isGoogleVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { isGoogleVisible = !isGoogleVisible }) {
+                            Icon(if (isGoogleVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null)
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = SurfaceContainer,
+                        unfocusedContainerColor = SurfaceContainer,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedBorderColor = Primary
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    textStyle = Typography.labelMedium
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Fallback Switch
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Enter API Key", style = Typography.labelMedium) },
-                visualTransformation = if (isVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { isVisible = !isVisible }) {
-                        Icon(if (isVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null)
-                    }
-                },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = SurfaceContainer,
-                    unfocusedContainerColor = SurfaceContainer,
-                    unfocusedBorderColor = Color.Transparent,
-                    focusedBorderColor = Primary
-                ),
-                shape = RoundedCornerShape(8.dp),
-                textStyle = Typography.labelMedium
-            )
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Auto-Fallback", style = Typography.labelMedium, color = OnSurface, fontWeight = FontWeight.Bold)
+                    Text("Use Google Translate if Gemini fails", style = Typography.labelSmall, color = OnSurfaceVariant)
+                }
+                Switch(
+                    checked = fallbackEnabled,
+                    onCheckedChange = onFallbackEnabledChange,
+                    colors = SwitchDefaults.colors(checkedThumbColor = OnPrimary, checkedTrackColor = Primary)
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
             
