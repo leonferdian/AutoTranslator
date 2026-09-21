@@ -14,6 +14,8 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
     companion object {
         private val API_KEY = stringPreferencesKey("api_key")
         private val TARGET_LANGUAGE = stringPreferencesKey("target_language")
+        private val SOURCE_LANGUAGE = stringPreferencesKey("source_language")
+        private val TRANSLATION_ENGINE = stringPreferencesKey("translation_engine")
         private val BUBBLE_SIZE = intPreferencesKey("bubble_size")
         private val OPACITY = intPreferencesKey("opacity")
         private val FONT_SCALE = intPreferencesKey("font_scale")
@@ -27,6 +29,16 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
     override fun getTargetLanguage(): Flow<String> = context.dataStore.data.map { it[TARGET_LANGUAGE] ?: "Thai (ไทย)" }
     override suspend fun setTargetLanguage(language: String) {
         context.dataStore.edit { it[TARGET_LANGUAGE] = language }
+    }
+
+    override fun getSourceLanguage(): Flow<String> = context.dataStore.data.map { it[SOURCE_LANGUAGE] ?: "Auto-Detect" }
+    override suspend fun setSourceLanguage(language: String) {
+        context.dataStore.edit { it[SOURCE_LANGUAGE] = language }
+    }
+
+    override fun getTranslationEngine(): Flow<String> = context.dataStore.data.map { it[TRANSLATION_ENGINE] ?: "Gemini" }
+    override suspend fun setTranslationEngine(engine: String) {
+        context.dataStore.edit { it[TRANSLATION_ENGINE] = engine }
     }
 
     override fun getBubbleSize(): Flow<Int> = context.dataStore.data.map { it[BUBBLE_SIZE] ?: 64 }

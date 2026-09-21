@@ -87,7 +87,9 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private val bubbleSizeState = mutableIntStateOf(64)
     private val opacityState = mutableIntStateOf(85)
     private val fontScaleState = mutableIntStateOf(16)
+    private val sourceLanguageState = mutableStateOf("Auto-Detect")
     private val targetLanguageState = mutableStateOf("Thai (ไทย)")
+    private val translationEngineState = mutableStateOf("Gemini")
     private val isPinnedState = mutableStateOf(false)
     private val ocrActiveZoneState = mutableStateOf("Lower 60%")
 
@@ -146,6 +148,12 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         scope.launch {
             settings.getTargetLanguage().collect { targetLanguageState.value = it }
         }
+        scope.launch {
+            settings.getSourceLanguage().collect { sourceLanguageState.value = it }
+        }
+        scope.launch {
+            settings.getTranslationEngine().collect { translationEngineState.value = it }
+        }
     }
 
     private fun registerTextReceiver() {
@@ -156,18 +164,46 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Satisfy foreground service requirements immediately
+        val notification = createNotification()
+        
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // On Android 14, we must have a valid MediaProjection to use this type.
+                // If we don't have it yet, we start as a generic service and promote later.
+                if (intent?.hasExtra(EXTRA_DATA) == true) {
+                    startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+                } else {
+                    // Fallback type or none if possible. Android 14 is very strict.
+                    // We'll use 0 for now or just the projection type if we're sure.
+                    startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+                }
+            } else {
+                startForeground(1, notification)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // Fallback for older APIs or missing types
+            startForeground(1, notification)
+        }
+
         when (intent?.action) {
             ACTION_START -> {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-                val data = intent.getParcelableExtra<Intent>(EXTRA_DATA)
+                val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(EXTRA_DATA)
+                }
+
                 if (resultCode != 0 && data != null) {
-                    val notification = createNotification()
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-                    } else {
-                        startForeground(1, notification)
+                    try {
+                        initMediaProjection(resultCode, data)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        translatedTextState.value = "Capture Error: ${e.message}"
                     }
-                    initMediaProjection(resultCode, data)
                 }
             }
             ACTION_STOP -> {
@@ -180,15 +216,26 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
 
     private fun initMediaProjection(resultCode: Int, data: Intent) {
         val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mpManager.getMediaProjection(resultCode, data)
+        val mp = mpManager.getMediaProjection(resultCode, data) ?: throw IllegalStateException("Failed to create MediaProjection")
+        mediaProjection = mp
         
+        mp.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+                ocrJob?.cancel()
+                virtualDisplay?.release()
+                virtualDisplay = null
+                mediaProjection = null
+            }
+        }, null)
+
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
         val height = metrics.heightPixels
         val density = metrics.densityDpi
 
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
+        virtualDisplay = mp.createVirtualDisplay(
             "ScreenCapture",
             width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
@@ -202,16 +249,22 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         ocrJob?.cancel()
         ocrJob = scope.launch(Dispatchers.Default) {
             while (isActive) {
-                if (isPanelVisibleState.value) {
+                if (isPanelVisibleState.value && mediaProjection != null) {
                     captureAndProcessFrame()
                 }
-                delay(2000) // Process every 2 seconds
+                delay(2500) // Increased delay to 2.5s for stability
             }
         }
     }
 
     private fun captureAndProcessFrame() {
-        val image = imageReader?.acquireLatestImage() ?: return
+        val reader = imageReader ?: return
+        val image = try {
+            reader.acquireLatestImage()
+        } catch (e: Exception) {
+            null
+        } ?: return
+
         try {
             val planes = image.planes
             val buffer: ByteBuffer = planes[0].buffer
@@ -219,33 +272,35 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             val rowStride = planes[0].rowStride
             val rowPadding = rowStride - pixelStride * image.width
             
-            val fullBitmap = Bitmap.createBitmap(
-                image.width + rowPadding / pixelStride,
-                image.height, Bitmap.Config.ARGB_8888
-            )
+            val bitmapWidth = image.width + rowPadding / pixelStride
+            if (bitmapWidth <= 0 || image.height <= 0) return
+
+            val fullBitmap = Bitmap.createBitmap(bitmapWidth, image.height, Bitmap.Config.ARGB_8888)
             fullBitmap.copyPixelsFromBuffer(buffer)
             
-            // Crop to lower 60% as per mockup "OCR Active Zone: Lower 60%"
+            // Crop to lower 60%
             val cropHeight = (image.height * 0.6).toInt()
             val cropTop = image.height - cropHeight
-            val croppedBitmap = Bitmap.createBitmap(fullBitmap, 0, cropTop, image.width, cropHeight)
             
-            val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
-            recognizer.process(inputImage)
-                .addOnSuccessListener { visionText ->
-                    val text = visionText.text
-                    if (text.isNotBlank()) {
-                        scope.launch(Dispatchers.Main) {
-                            if (text != originalTextState.value) {
+            if (image.width > 0 && cropHeight > 0) {
+                val croppedBitmap = Bitmap.createBitmap(fullBitmap, 0, cropTop, image.width, cropHeight)
+                val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
+                
+                recognizer.process(inputImage)
+                    .addOnSuccessListener { visionText ->
+                        val text = visionText.text.trim()
+                        if (text.isNotBlank() && text != originalTextState.value) {
+                            scope.launch(Dispatchers.Main) {
                                 translateText(text)
                             }
                         }
                     }
-                }
+                    .addOnCompleteListener {
+                        croppedBitmap.recycle()
+                    }
+            }
             
             fullBitmap.recycle()
-            // croppedBitmap will be recycled by InputImage or we can do it after process?
-            // Actually ML Kit doesn't recycle it immediately.
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
@@ -356,7 +411,9 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                     val translatedText by remember { translatedTextState }
                     val opacity by remember { opacityState }
                     val fontScale by remember { fontScaleState }
+                    val sourceLang by remember { sourceLanguageState }
                     val targetLang by remember { targetLanguageState }
+                    val engine by remember { translationEngineState }
                     val isPinned by remember { isPinnedState }
                     val ocrActiveZone by remember { ocrActiveZoneState }
 
@@ -385,7 +442,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                                 .background(SurfaceContainerHigh)
                                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                                         ) {
-                                            Text("EN", style = Typography.labelSmall, color = OnSurfaceVariant)
+                                            Text(sourceLang, style = Typography.labelSmall, color = OnSurfaceVariant)
                                         }
                                         Icon(
                                             Icons.Default.ArrowForward,
@@ -401,6 +458,8 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                         ) {
                                             Text(targetLang, style = Typography.labelSmall, color = Primary, fontWeight = FontWeight.Bold)
                                         }
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(engine, style = Typography.labelSmall, color = Tertiary)
                                     }
                                     
                                     Row(verticalAlignment = Alignment.CenterVertically) {

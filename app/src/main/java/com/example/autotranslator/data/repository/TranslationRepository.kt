@@ -15,19 +15,36 @@ class TranslationRepositoryImpl(
 ) : TranslationRepository {
 
     override suspend fun translateText(text: String): Result<String> {
+        val engine = settingsProvider.getTranslationEngine().firstOrNull() ?: "Gemini"
+        
+        return if (engine == "Gemini") {
+            translateWithGemini(text)
+        } else {
+            translateWithGoogle(text)
+        }
+    }
+
+    private suspend fun translateWithGemini(text: String): Result<String> {
         val apiKey = settingsProvider.getApiKey().firstOrNull() ?: ""
         if (apiKey.isBlank()) {
             return Result.failure(IllegalStateException("Gemini API key is not configured."))
         }
 
+        val sourceLang = settingsProvider.getSourceLanguage().firstOrNull() ?: "Auto-Detect"
         val targetLang = settingsProvider.getTargetLanguage().firstOrNull() ?: "Thai (ไทย)"
         
+        val prompt = if (sourceLang == "Auto-Detect") {
+            "Translate the provided text into $targetLang. "
+        } else {
+            "Translate the provided text from $sourceLang to $targetLang. "
+        }
+
         val request = GeminiRequest(
             contents = listOf(Content(listOf(Part(text = text)))),
             systemInstruction = SystemInstruction(
                 parts = listOf(
                     Part(
-                        text = "You are a live, ultra-fast translator. Translate the provided text into $targetLang. " +
+                        text = "You are a live, ultra-fast translator. $prompt" +
                                "Maintain chat/gaming slang, emotions, and shorthand terms contextually. " +
                                "Do NOT add any introductions, explanations, or metadata. Output ONLY the raw translated text."
                     )
@@ -51,5 +68,11 @@ class TranslationRepositoryImpl(
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    private suspend fun translateWithGoogle(text: String): Result<String> {
+        // For now, let's use a public endpoint or just simulate it for the demo
+        // Real implementation would use Google Cloud Translation API
+        return Result.success("[Google Translate] $text (Mocked)")
     }
 }

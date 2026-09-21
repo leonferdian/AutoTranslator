@@ -66,6 +66,8 @@ fun DashboardScreen() {
 
     val apiKey by settings.getApiKey().collectAsState(initial = "")
     val targetLanguage by settings.getTargetLanguage().collectAsState(initial = "Thai (ไทย)")
+    val sourceLanguage by settings.getSourceLanguage().collectAsState(initial = "Auto-Detect")
+    val translationEngine by settings.getTranslationEngine().collectAsState(initial = "Gemini")
     val bubbleSize by settings.getBubbleSize().collectAsState(initial = 64)
     val opacity by settings.getOpacity().collectAsState(initial = 85)
     val fontScale by settings.getFontScale().collectAsState(initial = 16)
@@ -104,7 +106,12 @@ fun DashboardScreen() {
                 ApiSetupCard(
                     apiKey = apiKey,
                     onApiKeyChange = { scope.launch { settings.setApiKey(it) } },
-                    targetLanguage = targetLanguage
+                    sourceLanguage = sourceLanguage,
+                    onSourceLanguageChange = { scope.launch { settings.setSourceLanguage(it) } },
+                    targetLanguage = targetLanguage,
+                    onTargetLanguageChange = { scope.launch { settings.setTargetLanguage(it) } },
+                    translationEngine = translationEngine,
+                    onTranslationEngineChange = { scope.launch { settings.setTranslationEngine(it) } }
                 )
             }
 
@@ -313,8 +320,23 @@ fun DashboardTopBar() {
 }
 
 @Composable
-fun ApiSetupCard(apiKey: String, onApiKeyChange: (String) -> Unit, targetLanguage: String) {
+fun ApiSetupCard(
+    apiKey: String,
+    onApiKeyChange: (String) -> Unit,
+    sourceLanguage: String,
+    onSourceLanguageChange: (String) -> Unit,
+    targetLanguage: String,
+    onTargetLanguageChange: (String) -> Unit,
+    translationEngine: String,
+    onTranslationEngineChange: (String) -> Unit
+) {
     var isVisible by remember { mutableStateOf(false) }
+    var showSourceMenu by remember { mutableStateOf(false) }
+    var showTargetMenu by remember { mutableStateOf(false) }
+    var showEngineMenu by remember { mutableStateOf(false) }
+    
+    val languages = listOf("Auto-Detect", "English", "Thai (ไทย)", "Indonesian (Bahasa)", "Japanese (日本語)", "Chinese (中文)", "Korean (한국어)")
+    val engines = listOf("Gemini", "Google Translate")
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -322,23 +344,45 @@ fun ApiSetupCard(apiKey: String, onApiKeyChange: (String) -> Unit, targetLanguag
         colors = CardDefaults.cardColors(containerColor = SurfaceContainerLow)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.clip(CircleShape).background(SurfaceContainerHigh).padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Bolt, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Gemini 1.5 Flash", style = Typography.labelMedium, color = Primary, fontWeight = FontWeight.Bold)
+            // Engine Selector
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(SurfaceContainerHigh)
+                            .clickable { showEngineMenu = true }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Bolt, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(translationEngine, style = Typography.labelMedium, color = Primary, fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    DropdownMenu(expanded = showEngineMenu, onDismissRequest = { showEngineMenu = false }) {
+                        engines.forEach { engine ->
+                            DropdownMenuItem(
+                                text = { Text(engine) },
+                                onClick = {
+                                    onTranslationEngineChange(engine)
+                                    showEngineMenu = false
+                                }
+                            )
+                        }
                     }
                 }
-                Spacer(Modifier.width(8.dp))
                 Text("v2-exp", style = Typography.labelSmall, color = OnSurfaceVariant)
             }
             
             Spacer(Modifier.height(16.dp))
             
-            Text("GEMINI API CREDENTIALS", style = Typography.labelSmall, color = OnSurfaceVariant)
+            Text("${translationEngine.uppercase()} API CREDENTIALS", style = Typography.labelSmall, color = OnSurfaceVariant)
             Spacer(Modifier.height(8.dp))
             
             OutlinedTextField(
@@ -376,20 +420,67 @@ fun ApiSetupCard(apiKey: String, onApiKeyChange: (String) -> Unit, targetLanguag
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
-                    Text("SOURCE STREAM", style = Typography.labelSmall, color = Outline)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.AutoFixHigh, contentDescription = null, tint = Secondary, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Auto-Detect", style = Typography.headlineSmall, color = OnSurface)
+                // Source Language
+                Box(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier.clickable { showSourceMenu = true }
+                    ) {
+                        Text("SOURCE STREAM", style = Typography.labelSmall, color = Outline)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (sourceLanguage == "Auto-Detect") {
+                                Icon(Icons.Default.AutoFixHigh, contentDescription = null, tint = Secondary, modifier = Modifier.size(16.dp))
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            Text(sourceLanguage, style = Typography.headlineSmall, color = OnSurface)
+                        }
+                    }
+                    DropdownMenu(expanded = showSourceMenu, onDismissRequest = { showSourceMenu = false }) {
+                        languages.forEach { lang ->
+                            DropdownMenuItem(
+                                text = { Text(lang) },
+                                onClick = {
+                                    onSourceLanguageChange(lang)
+                                    showSourceMenu = false
+                                }
+                            )
+                        }
                     }
                 }
-                Icon(Icons.Default.SyncAlt, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(16.dp))
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("TARGET OVERLAY", style = Typography.labelSmall, color = Outline)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(targetLanguage, style = Typography.headlineSmall, color = Primary)
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Primary)
+
+                // Switch Button
+                IconButton(
+                    onClick = {
+                        val temp = sourceLanguage
+                        onSourceLanguageChange(targetLanguage)
+                        onTargetLanguageChange(temp)
+                    },
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    Icon(Icons.Default.SyncAlt, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(16.dp))
+                }
+
+                // Target Language
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    Column(
+                        modifier = Modifier.clickable { showTargetMenu = true },
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text("TARGET OVERLAY", style = Typography.labelSmall, color = Outline)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(targetLanguage, style = Typography.headlineSmall, color = Primary)
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Primary)
+                        }
+                    }
+                    DropdownMenu(expanded = showTargetMenu, onDismissRequest = { showTargetMenu = false }) {
+                        languages.filter { it != "Auto-Detect" }.forEach { lang ->
+                            DropdownMenuItem(
+                                text = { Text(lang) },
+                                onClick = {
+                                    onTargetLanguageChange(lang)
+                                    showTargetMenu = false
+                                }
+                            )
+                        }
                     }
                 }
             }

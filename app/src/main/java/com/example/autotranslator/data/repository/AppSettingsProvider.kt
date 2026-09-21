@@ -9,6 +9,12 @@ interface AppSettingsProvider {
     fun getTargetLanguage(): Flow<String>
     suspend fun setTargetLanguage(language: String)
 
+    fun getSourceLanguage(): Flow<String>
+    suspend fun setSourceLanguage(language: String)
+
+    fun getTranslationEngine(): Flow<String>
+    suspend fun setTranslationEngine(engine: String)
+
     fun getBubbleSize(): Flow<Int>
     suspend fun setBubbleSize(size: Int)
 
