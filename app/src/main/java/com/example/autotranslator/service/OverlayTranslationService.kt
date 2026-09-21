@@ -438,116 +438,126 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
+                                                .clip(RoundedCornerShape(12.dp))
                                                 .background(SurfaceContainerHigh)
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
                                         ) {
-                                            Text(sourceLang, style = Typography.labelSmall, color = OnSurfaceVariant)
+                                            Text(
+                                                text = if (sourceLang == "Auto-Detect") "EN" else sourceLang.take(2).uppercase(),
+                                                style = Typography.labelMedium,
+                                                color = OnSurfaceVariant,
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
                                         Icon(
                                             Icons.Default.ArrowForward,
                                             contentDescription = null,
-                                            modifier = Modifier.padding(horizontal = 8.dp).size(14.dp),
+                                            modifier = Modifier.padding(horizontal = 12.dp).size(16.dp),
                                             tint = OnSurfaceVariant
                                         )
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Primary.copy(alpha = 0.2f))
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Primary.copy(alpha = 0.25f))
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
                                         ) {
-                                            Text(targetLang, style = Typography.labelSmall, color = Primary, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = targetLang.uppercase(),
+                                                style = Typography.labelMedium,
+                                                color = Primary,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
                                         }
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(engine, style = Typography.labelSmall, color = Tertiary)
                                     }
                                     
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        IconButton(onClick = { isPinnedState.value = !isPinned }, modifier = Modifier.size(32.dp)) {
+                                        IconButton(onClick = { isPinnedState.value = !isPinned }, modifier = Modifier.size(36.dp)) {
                                             Icon(
                                                 imageVector = Icons.Default.PushPin,
                                                 contentDescription = "Pin",
                                                 tint = if (isPinned) Primary else OnSurfaceVariant,
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(20.dp)
                                             )
                                         }
-                                        IconButton(onClick = { }, modifier = Modifier.size(32.dp)) {
+                                        IconButton(onClick = { }, modifier = Modifier.size(36.dp)) {
                                             Icon(
                                                 imageVector = Icons.Default.OpenInFull,
                                                 contentDescription = "Expand",
                                                 tint = OnSurfaceVariant,
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(20.dp)
                                             )
                                         }
                                         IconButton(
                                             onClick = { isPanelVisibleState.value = false },
-                                            modifier = Modifier.size(32.dp)
+                                            modifier = Modifier.size(36.dp)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Close,
                                                 contentDescription = "Close",
                                                 tint = OnSurfaceVariant,
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(20.dp)
                                             )
                                         }
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(16.dp))
+                                Spacer(modifier = Modifier.height(24.dp))
 
                                 // Source Text
                                 Row(verticalAlignment = Alignment.Top) {
                                     Icon(
-                                        Icons.Default.GraphicEq,
+                                        Icons.Default.CropFree,
                                         contentDescription = null,
                                         tint = Primary,
-                                        modifier = Modifier.size(18.dp).padding(top = 2.dp)
+                                        modifier = Modifier.size(22.dp).padding(top = 2.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Spacer(modifier = Modifier.width(16.dp))
                                     Text(
                                         text = "“$originalText”",
                                         style = Typography.bodyLarge.copy(
                                             fontSize = fontScale.sp,
-                                            fontStyle = FontStyle.Italic
+                                            fontStyle = FontStyle.Italic,
+                                            lineHeight = (fontScale * 1.4).sp
                                         ),
-                                        color = OnSurface.copy(alpha = 0.8f)
+                                        color = OnSurface.copy(alpha = 0.7f)
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(12.dp))
+                                Spacer(modifier = Modifier.height(16.dp))
 
                                 // Translated Text
                                 Row(verticalAlignment = Alignment.Top) {
-                                    Spacer(modifier = Modifier.width(30.dp))
+                                    Spacer(modifier = Modifier.width(38.dp))
                                     Text(
                                         text = "“$translatedText”",
                                         style = Typography.headlineSmall.copy(
-                                            fontSize = (fontScale + 2).sp,
-                                            fontWeight = FontWeight.Bold
+                                            fontSize = (fontScale + 4).sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            lineHeight = ((fontScale + 4) * 1.3).sp
                                         ),
                                         color = OnSurface
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(20.dp))
+                                Spacer(modifier = Modifier.height(28.dp))
 
                                 // Action Buttons
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                                 ) {
                                     Button(
                                         onClick = { 
                                             tts?.speak(translatedText, TextToSpeech.QUEUE_FLUSH, null, null)
                                         },
-                                        modifier = Modifier.weight(1f).height(40.dp),
+                                        modifier = Modifier.weight(1.2f).height(48.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = SurfaceContainerHigh),
                                         shape = RoundedCornerShape(12.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp)
+                                        contentPadding = PaddingValues(horizontal = 16.dp)
                                     ) {
-                                        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = OnSurface, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Listen (TTS)", style = Typography.labelMedium, color = OnSurface)
+                                        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = OnSurface, modifier = Modifier.size(20.dp))
+                                        Spacer(Modifier.width(10.dp))
+                                        Text("Listen (TTS)", style = Typography.labelLarge, color = OnSurface)
                                     }
                                     Button(
                                         onClick = { 
@@ -555,40 +565,80 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                             val clip = ClipData.newPlainText("Translated Text", translatedText)
                                             clipboard.setPrimaryClip(clip)
                                         },
-                                        modifier = Modifier.weight(1f).height(40.dp),
+                                        modifier = Modifier.weight(1f).height(48.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = SurfaceContainerHigh),
                                         shape = RoundedCornerShape(12.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp)
+                                        contentPadding = PaddingValues(horizontal = 16.dp)
                                     ) {
-                                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = OnSurface, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Copy", style = Typography.labelMedium, color = OnSurface)
+                                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = OnSurface, modifier = Modifier.size(20.dp))
+                                        Spacer(Modifier.width(10.dp))
+                                        Text("Copy", style = Typography.labelLarge, color = OnSurface)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                // Bottom Controls
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.WaterDrop, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Slider(
+                                        value = opacity.toFloat(),
+                                        onValueChange = { 
+                                            // Handle change - maybe through a callback to service to update state
+                                            opacityState.intValue = it.toInt()
+                                        },
+                                        valueRange = 20f..100f,
+                                        modifier = Modifier.weight(1f),
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = OnSurfaceVariant,
+                                            activeTrackColor = OnSurfaceVariant,
+                                            inactiveTrackColor = SurfaceContainerHighest
+                                        )
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text("$opacity%", style = Typography.labelSmall, color = OnSurfaceVariant)
+                                    Spacer(Modifier.width(24.dp))
+                                    
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(SurfaceContainerHigh)
+                                            .padding(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        TextButton(
+                                            onClick = { if (fontScaleState.intValue > 12) fontScaleState.intValue -= 2 },
+                                            modifier = Modifier.height(28.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            Text("A-", style = Typography.labelMedium, color = OnSurfaceVariant)
+                                        }
+                                        Box(Modifier.width(1.dp).height(16.dp).background(OutlineVariant))
+                                        TextButton(
+                                            onClick = { if (fontScaleState.intValue < 24) fontScaleState.intValue += 2 },
+                                            modifier = Modifier.height(28.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            Text("A+", style = Typography.labelMedium, color = Primary, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
 
                                 Spacer(modifier = Modifier.height(16.dp))
 
-                                // Bottom Controls
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Tertiary))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(
-                                            text = "OCR Active Zone: $ocrActiveZone",
-                                            style = Typography.labelSmall,
-                                            color = OnSurfaceVariant
-                                        )
-                                    }
-                                    
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("A-", style = Typography.labelMedium, color = OnSurfaceVariant)
-                                        Spacer(Modifier.width(12.dp))
-                                        Text("A+", style = Typography.labelMedium, color = Primary, fontWeight = FontWeight.Bold)
-                                    }
+                                // Footer
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Tertiary))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "OCR Active Zone: $ocrActiveZone",
+                                        style = Typography.labelSmall,
+                                        color = OnSurfaceVariant
+                                    )
                                 }
                             }
                         }
