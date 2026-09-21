@@ -7,19 +7,12 @@ import android.os.Build
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
@@ -33,8 +26,7 @@ class OverlayBubbleManager(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
     private val viewModelStoreOwner: ViewModelStoreOwner,
-    private val savedStateRegistryOwner: SavedStateRegistryOwner,
-    private val engineName: String = "AI"
+    private val savedStateRegistryOwner: SavedStateRegistryOwner
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val activeBubbles = mutableMapOf<Int, BubbleInstance>()
@@ -49,7 +41,8 @@ class OverlayBubbleManager(
         val bubble = activeBubbles[id]
         if (bubble != null) {
             bubble.textState.value = text
-            if (Math.abs(bubble.rect.top - rect.top) > 5 || Math.abs(bubble.rect.left - rect.left) > 5) {
+            // Update position if it moved significantly
+            if (Math.abs(bubble.rect.top - rect.top) > 10 || Math.abs(bubble.rect.left - rect.left) > 10) {
                 updateViewLayout(bubble.view, rect)
                 activeBubbles[id] = bubble.copy(rect = Rect(rect))
             }
@@ -70,25 +63,16 @@ class OverlayBubbleManager(
                     val content by textState
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color(0x99000000))
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .background(Color(0x88000000), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "$engineName:",
-                                color = Color.Gray,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Normal
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = content,
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
+                        Text(
+                            text = content,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            lineHeight = 14.sp,
+                            fontWeight = FontWeight.Normal
+                        )
                     }
                 }
             }
@@ -98,9 +82,7 @@ class OverlayBubbleManager(
         try {
             windowManager.addView(composeView, params)
             activeBubbles[id] = BubbleInstance(composeView, textState, Rect(rect))
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) {}
     }
 
     private fun updateViewLayout(view: ComposeView, rect: Rect) {
@@ -122,8 +104,8 @@ class OverlayBubbleManager(
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = rect.left + 20 // Indent slightly like in the image
-            y = rect.bottom + 4 
+            x = rect.left
+            y = rect.bottom + 2
         }
     }
 
