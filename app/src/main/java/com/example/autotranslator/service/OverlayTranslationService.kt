@@ -18,12 +18,17 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.animation.core.animate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -32,9 +37,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -119,20 +126,30 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     }
 
     private fun translateAndShowBubble(id: Int, text: String, rect: Rect) {
+        Log.d("OverlayService", "translateAndShowBubble: id=$id, text=$text, rect=$rect")
         val cached = translationCache[text]
         if (cached != null) {
+            Log.d("OverlayService", "translateAndShowBubble: Using cached translation for $id")
             bubbleManager.updateBubble(id, cached, rect)
             return
         }
 
         scope.launch(Dispatchers.IO) {
-            val repository = ServiceLocator.provideTranslationRepository(this@OverlayTranslationService)
-            val result = repository.translateText(text)
-            withContext(Dispatchers.Main) {
-                result.onSuccess { translated ->
-                    translationCache[text] = translated
-                    bubbleManager.updateBubble(id, translated, rect)
+            try {
+                val repository = ServiceLocator.provideTranslationRepository(this@OverlayTranslationService)
+                Log.d("OverlayService", "translateAndShowBubble: Requesting translation for $id")
+                val result = repository.translateText(text)
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { translated ->
+                        Log.d("OverlayService", "translateAndShowBubble: Translation success for $id: $translated")
+                        translationCache[text] = translated
+                        bubbleManager.updateBubble(id, translated, rect)
+                    }.onFailure { e ->
+                        Log.e("OverlayService", "translateAndShowBubble: Translation failed for $id", e)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("OverlayService", "translateAndShowBubble: Exception during translation for $id", e)
             }
         }
     }
@@ -213,6 +230,18 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val mp = mpManager.getMediaProjection(resultCode, data) ?: return
         mediaProjection = mp
+
+        // Register callback required for Android 14+
+        mp.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+                mediaProjection = null
+                virtualDisplay?.release()
+                virtualDisplay = null
+                imageReader?.close()
+                imageReader = null
+            }
+        }, Handler(Looper.getMainLooper()))
         
         val metrics = resources.displayMetrics
         imageReader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 2)
@@ -235,8 +264,14 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     }
 
     private fun captureAndProcessFrame() {
-        val image = try { imageReader?.acquireLatestImage() } catch (e: Exception) { null } ?: return
+        Log.d("OverlayService", "captureAndProcessFrame: Starting capture")
+        val image = try { imageReader?.acquireLatestImage() } catch (e: Exception) { 
+            Log.e("OverlayService", "captureAndProcessFrame: Failed to acquire image", e)
+            null 
+        } ?: return
+        
         try {
+            Log.d("OverlayService", "captureAndProcessFrame: Image acquired, size: ${image.width}x${image.height}")
             val planes = image.planes
             val buffer: ByteBuffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
@@ -246,7 +281,11 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             bitmap.copyPixelsFromBuffer(buffer)
             
             recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                .addOnCompleteListener {
+                    bitmap.recycle()
+                }
                 .addOnSuccessListener { visionText ->
+                    Log.d("OverlayService", "captureAndProcessFrame: OCR Success, found ${visionText.textBlocks.size} blocks")
                     val activeIds = mutableSetOf<Int>()
                     visionText.textBlocks.forEach { block ->
                         val rect = block.boundingBox ?: return@forEach
@@ -256,20 +295,31 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                     }
                     bubbleManager.removeBubblesNotIn(activeIds)
                 }
-            bitmap.recycle()
-        } catch (e: Exception) { } finally { image.close() }
+                .addOnFailureListener { e ->
+                    Log.e("OverlayService", "captureAndProcessFrame: OCR Failed", e)
+                }
+        } catch (e: Exception) { 
+            Log.e("OverlayService", "captureAndProcessFrame: Error during processing", e)
+        } finally { 
+            image.close() 
+        }
     }
 
     private fun showSideTrigger() {
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
-            x = 20
+            gravity = Gravity.TOP or Gravity.START
+            x = screenWidth - 150
+            y = screenHeight / 2
         }
 
         triggerView = ComposeView(this).apply {
@@ -279,16 +329,54 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             setContent {
                 AutoTranslatorTheme {
                     val isEnabled by remember { isTranslationEnabledState }
+                    var alphaValue by remember { mutableStateOf(1f) }
+                    var lastInteractionTime by remember { mutableStateOf(System.currentTimeMillis()) }
+
+                    LaunchedEffect(lastInteractionTime) {
+                        delay(3000)
+                        alphaValue = 0.5f
+                    }
+
                     Box(
                         modifier = Modifier
                             .size(50.dp)
                             .shadow(8.dp, CircleShape)
                             .clip(CircleShape)
+                            .alpha(alphaValue)
                             .background(if (isEnabled) Color(0xCC00C853) else Color(0xCC1E1E1E))
                             .border(2.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                            .pointerInput(Unit) {
+                                detectDragGestures(
+                                    onDragStart = {
+                                        alphaValue = 1f
+                                        lastInteractionTime = System.currentTimeMillis()
+                                    },
+                                    onDragEnd = {
+                                        val buttonWidth = size.width
+                                        val targetX = if (params.x + buttonWidth / 2 < screenWidth / 2) 0 else screenWidth - buttonWidth
+                                        params.x = targetX
+                                        try { windowManager.updateViewLayout(triggerView, params) } catch (e: Exception) {}
+                                        lastInteractionTime = System.currentTimeMillis()
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        params.x += dragAmount.x.toInt()
+                                        params.y += dragAmount.y.toInt()
+                                        try { windowManager.updateViewLayout(triggerView, params) } catch (e: Exception) {}
+                                        lastInteractionTime = System.currentTimeMillis()
+                                        alphaValue = 1f
+                                    }
+                                )
+                            }
                             .clickable {
                                 isTranslationEnabledState.value = !isEnabled
-                                if (!isTranslationEnabledState.value) bubbleManager.clearAll()
+                                lastInteractionTime = System.currentTimeMillis()
+                                alphaValue = 1f
+                                if (!isTranslationEnabledState.value) {
+                                    bubbleManager.clearAll()
+                                } else {
+                                    scope.launch { captureAndProcessFrame() }
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -310,7 +398,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, "overlay_channel")
             .setContentTitle("Auto Translator Active")
-            .setSmallIcon(R.drawable.ic_menu_manage)
+            .setSmallIcon(android.R.drawable.ic_menu_manage)
             .build()
     }
 

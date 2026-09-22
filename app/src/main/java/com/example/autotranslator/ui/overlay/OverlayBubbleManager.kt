@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
+import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.background
@@ -38,11 +39,12 @@ class OverlayBubbleManager(
     )
 
     fun updateBubble(id: Int, text: String, rect: Rect) {
+        Log.d("BubbleManager", "updateBubble: id=$id, text=$text, rect=$rect")
         val bubble = activeBubbles[id]
         if (bubble != null) {
             bubble.textState.value = text
             // Update position if it moved significantly
-            if (Math.abs(bubble.rect.top - rect.top) > 10 || Math.abs(bubble.rect.left - rect.left) > 10) {
+            if (Math.abs(bubble.rect.top - rect.top) > 5 || Math.abs(bubble.rect.left - rect.left) > 5) {
                 updateViewLayout(bubble.view, rect)
                 activeBubbles[id] = bubble.copy(rect = Rect(rect))
             }
@@ -52,6 +54,7 @@ class OverlayBubbleManager(
     }
 
     private fun createBubble(id: Int, text: String, rect: Rect) {
+        Log.d("BubbleManager", "createBubble: id=$id, text=$text")
         val textState = mutableStateOf(text)
         val composeView = ComposeView(context).apply {
             setViewTreeLifecycleOwner(lifecycleOwner)
