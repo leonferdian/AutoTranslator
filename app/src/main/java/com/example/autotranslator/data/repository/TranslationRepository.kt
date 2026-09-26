@@ -72,9 +72,16 @@ class TranslationRepositoryImpl(
         val engineType = settingsProvider.getTranslationEngine().firstOrNull() ?: "Gemini"
         val sourceLang = settingsProvider.getSourceLanguage().firstOrNull() ?: "Auto-Detect"
         val targetLang = settingsProvider.getTargetLanguage().firstOrNull() ?: "Thai (ไทย)"
+        val fallbackEnabled = settingsProvider.getFallbackEnabled().firstOrNull() ?: false
 
-        val engine = if (engineType == "Gemini") geminiEngine else googleEngine
+        if (engineType == "Gemini") {
+            val result = geminiEngine.translate(text, sourceLang, targetLang)
+            if (result.isFailure && fallbackEnabled) {
+                return googleEngine.translate(text, sourceLang, targetLang)
+            }
+            return result
+        }
         
-        return engine.translate(text, sourceLang, targetLang)
+        return googleEngine.translate(text, sourceLang, targetLang)
     }
 }

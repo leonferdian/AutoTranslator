@@ -276,9 +276,16 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             val buffer: ByteBuffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * image.width
-            val bitmap = Bitmap.createBitmap(image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888)
-            bitmap.copyPixelsFromBuffer(buffer)
+            
+            // Fix pixel alignment issue: Buffer has row padding, copyPixelsFromBuffer requires exact match
+            val bitmapWidth = rowStride / pixelStride
+            val paddedBitmap = Bitmap.createBitmap(bitmapWidth, image.height, Bitmap.Config.ARGB_8888)
+            buffer.rewind()
+            paddedBitmap.copyPixelsFromBuffer(buffer)
+            
+            // Crop out the padding to get the actual screen image
+            val bitmap = Bitmap.createBitmap(paddedBitmap, 0, 0, image.width, image.height)
+            paddedBitmap.recycle()
             
             recognizer.process(InputImage.fromBitmap(bitmap, 0))
                 .addOnCompleteListener {
