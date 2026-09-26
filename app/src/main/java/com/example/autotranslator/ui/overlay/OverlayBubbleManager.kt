@@ -63,18 +63,18 @@ class OverlayBubbleManager(
 
                             Box(
                                 modifier = Modifier
-                                    .offset(x = xPos, y = yPos + 8.dp)
-                                    .background(Color(0xE61E1E1E), RoundedCornerShape(12.dp))
-                                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(12.dp))
-                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                                    .offset(x = xPos, y = yPos + 4.dp)
+                                    .background(Color(0xD9000000), RoundedCornerShape(8.dp))
+                                    .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
                                     .widthIn(max = 280.dp)
                             ) {
                                 Text(
                                     text = bubble.text,
-                                    color = Color.White,
-                                    fontSize = 15.sp,
-                                    lineHeight = 20.sp,
-                                    fontWeight = FontWeight.Medium
+                                    color = Color(0xFFFBC02D),
+                                    fontSize = 14.sp,
+                                    lineHeight = 16.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }

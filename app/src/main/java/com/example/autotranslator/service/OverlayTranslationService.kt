@@ -323,7 +323,9 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                         val text = block.text
 
                         val isInsideBubble = bubbleAvoidanceRects.any { it.intersect(rect) || it.contains(rect) }
-                        if (isInsideBubble || text.contains("[Google]") || text == "..." || text == "[Error]") {
+                        val isGarbageText = text.length < 2 || !text.any { it.isLetterOrDigit() }
+                        
+                        if (isInsideBubble || text.contains("[Google]") || text == "..." || text == "[Error]" || isGarbageText) {
                             return@forEach
                         }
 
