@@ -96,6 +96,15 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private val translationCache = mutableMapOf<String, String>()
     private val pendingTranslations = mutableSetOf<String>()
 
+    data class TrackedBlock(
+        val id: Int,
+        var originalText: String,
+        var currentRect: Rect,
+        var lastSeenTime: Long
+    )
+    private val trackedBlocks = mutableListOf<TrackedBlock>()
+    private var nextBlockId = 1
+
     private val textReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (!isTranslationEnabledState.value) {
@@ -134,12 +143,9 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         }
 
         if (pendingTranslations.contains(text)) {
-            // We are already translating this exact text, just update its position with "..."
-            bubbleManager.updateBubble(id, "...", rect)
             return
         }
 
-        // Show a placeholder immediately so the user knows OCR found text
         pendingTranslations.add(text)
         bubbleManager.updateBubble(id, "...", rect)
 
@@ -150,17 +156,19 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                 withContext(Dispatchers.Main) {
                     pendingTranslations.remove(text)
                     result.onSuccess { translated ->
-                        translationCache[text] = translated
-                        bubbleManager.updateBubble(id, translated, rect)
+                        val cleanTranslation = translated.replace("[Google]", "").trim()
+                        translationCache[text] = cleanTranslation
+                        val latestRect = trackedBlocks.find { it.id == id }?.currentRect ?: rect
+                        bubbleManager.updateBubble(id, cleanTranslation, latestRect)
                     }.onFailure { e ->
-                        Log.e("OverlayService", "translateAndShowBubble: Translation failed for $text", e)
+                        Log.e("OverlayService", "Translation failed", e)
                         translationCache[text] = "[Error]"
-                        bubbleManager.updateBubble(id, "[Error]", rect)
+                        val latestRect = trackedBlocks.find { it.id == id }?.currentRect ?: rect
+                        bubbleManager.updateBubble(id, "[Error]", latestRect)
                     }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { pendingTranslations.remove(text) }
-                Log.e("OverlayService", "translateAndShowBubble: Exception during translation", e)
             }
         }
     }
@@ -303,16 +311,44 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                     bitmap.recycle()
                 }
                 .addOnSuccessListener { visionText ->
-                    Log.d("OverlayService", "captureAndProcessFrame: OCR Success, found ${visionText.textBlocks.size} blocks")
-                    val activeIds = mutableSetOf<Int>()
+                    val now = System.currentTimeMillis()
+                    val newActiveIds = mutableSetOf<Int>()
+                    
+                    val bubbleAvoidanceRects = bubbleManager.getActiveBubbleRects().map {
+                        Rect(it.left - 20, it.bottom, it.right + 200, it.bottom + 300)
+                    }
+
                     visionText.textBlocks.forEach { block ->
                         val rect = block.boundingBox ?: return@forEach
-                        // Use text hashcode for a stable ID across minor bounding box jitters
-                        val id = block.text.hashCode()
-                        activeIds.add(id)
-                        translateAndShowBubble(id, block.text, rect)
+                        val text = block.text
+
+                        val isInsideBubble = bubbleAvoidanceRects.any { it.intersect(rect) || it.contains(rect) }
+                        if (isInsideBubble || text.contains("[Google]") || text == "..." || text == "[Error]") {
+                            return@forEach
+                        }
+
+                        val matchedBlock = trackedBlocks.find { 
+                            it.originalText == text || Rect.intersects(it.currentRect, rect)
+                        }
+
+                        if (matchedBlock != null) {
+                            matchedBlock.currentRect = rect
+                            matchedBlock.originalText = text
+                            matchedBlock.lastSeenTime = now
+                            newActiveIds.add(matchedBlock.id)
+                            
+                            bubbleManager.updateBubbleRect(matchedBlock.id, rect)
+                        } else {
+                            val newId = nextBlockId++
+                            trackedBlocks.add(TrackedBlock(newId, text, rect, now))
+                            newActiveIds.add(newId)
+                            
+                            translateAndShowBubble(newId, text, rect)
+                        }
                     }
-                    bubbleManager.removeBubblesNotIn(activeIds)
+                    
+                    trackedBlocks.removeAll { now - it.lastSeenTime > 1500 }
+                    bubbleManager.removeBubblesNotIn(newActiveIds)
                 }
                 .addOnFailureListener { e ->
                     Log.e("OverlayService", "captureAndProcessFrame: OCR Failed", e)
@@ -393,7 +429,8 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                 alphaValue = 1f
                                 if (!isTranslationEnabledState.value) {
                                     bubbleManager.clearAll()
-                                    pendingTranslations.clear() // Prevent stalled requests from popping up
+                                    pendingTranslations.clear()
+                                    trackedBlocks.clear()
                                 } else {
                                     scope.launch { captureAndProcessFrame() }
                                 }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -60,17 +61,18 @@ class OverlayBubbleManager(
 
                             Box(
                                 modifier = Modifier
-                                    .offset(x = xPos, y = yPos + 2.dp)
-                                    .background(Color(0xD9000000), RoundedCornerShape(8.dp))
-                                    .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .offset(x = xPos, y = yPos + 8.dp)
+                                    .background(Color(0xE61E1E1E), RoundedCornerShape(12.dp))
+                                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                                    .widthIn(max = 280.dp)
                             ) {
                                 Text(
                                     text = bubble.text,
-                                    color = Color(0xFFFBC02D),
-                                    fontSize = 14.sp,
-                                    lineHeight = 16.sp,
-                                    fontWeight = FontWeight.Bold
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    lineHeight = 20.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
                             }
                         }
@@ -106,6 +108,16 @@ class OverlayBubbleManager(
 
     fun updateBubble(id: Int, text: String, rect: Rect) {
         activeBubbles[id] = BubbleData(text, rect)
+    }
+
+    fun updateBubbleRect(id: Int, rect: Rect) {
+        activeBubbles[id]?.let { bubble ->
+            activeBubbles[id] = bubble.copy(rect = rect)
+        }
+    }
+
+    fun getActiveBubbleRects(): List<Rect> {
+        return activeBubbles.values.map { it.rect }.toList()
     }
 
     fun removeBubblesNotIn(activeIds: Set<Int>) {
