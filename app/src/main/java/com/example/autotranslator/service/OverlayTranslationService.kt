@@ -134,6 +134,9 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             return
         }
 
+        // Show a placeholder immediately so the user knows OCR found text
+        bubbleManager.updateBubble(id, "...", rect)
+
         scope.launch(Dispatchers.IO) {
             try {
                 val repository = ServiceLocator.provideTranslationRepository(this@OverlayTranslationService)
@@ -146,6 +149,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                         bubbleManager.updateBubble(id, translated, rect)
                     }.onFailure { e ->
                         Log.e("OverlayService", "translateAndShowBubble: Translation failed for $id", e)
+                        bubbleManager.updateBubble(id, "[Error]", rect)
                     }
                 }
             } catch (e: Exception) {
@@ -258,7 +262,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                 if (isTranslationEnabledState.value && mediaProjection != null) {
                     captureAndProcessFrame()
                 }
-                delay(2000)
+                delay(1000) // Reduced delay for more dynamic/faster subtitle updates
             }
         }
     }
@@ -296,7 +300,8 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                     val activeIds = mutableSetOf<Int>()
                     visionText.textBlocks.forEach { block ->
                         val rect = block.boundingBox ?: return@forEach
-                        val id = (block.text + rect.top.toString()).hashCode()
+                        // Use text hashcode for a stable ID across minor bounding box jitters
+                        val id = block.text.hashCode()
                         activeIds.add(id)
                         translateAndShowBubble(id, block.text, rect)
                     }

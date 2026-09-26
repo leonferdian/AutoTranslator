@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -66,15 +67,16 @@ class OverlayBubbleManager(
                     val content by textState
                     Box(
                         modifier = Modifier
-                            .background(Color(0x88000000), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                            .background(Color(0xD9000000), RoundedCornerShape(8.dp))
+                            .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text(
                             text = content,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            lineHeight = 14.sp,
-                            fontWeight = FontWeight.Normal
+                            color = Color(0xFFFBC02D), // Bright yellow text for high visibility
+                            fontSize = 14.sp,
+                            lineHeight = 16.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
