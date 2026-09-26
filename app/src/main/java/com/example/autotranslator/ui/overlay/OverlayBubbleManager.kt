@@ -10,6 +10,8 @@ import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -17,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,106 +34,93 @@ class OverlayBubbleManager(
     private val savedStateRegistryOwner: SavedStateRegistryOwner
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private val activeBubbles = mutableMapOf<Int, BubbleInstance>()
+    private val activeBubbles = mutableStateMapOf<Int, BubbleData>()
+    private var overlayView: ComposeView? = null
 
-    data class BubbleInstance(
-        val view: ComposeView,
-        val textState: MutableState<String>,
-        val rect: Rect
-    )
+    data class BubbleData(val text: String, val rect: Rect)
 
-    fun updateBubble(id: Int, text: String, rect: Rect) {
-        Log.d("BubbleManager", "updateBubble: id=$id, text=$text, rect=$rect")
-        val bubble = activeBubbles[id]
-        if (bubble != null) {
-            bubble.textState.value = text
-            // Update position if it moved significantly
-            if (Math.abs(bubble.rect.top - rect.top) > 5 || Math.abs(bubble.rect.left - rect.left) > 5) {
-                updateViewLayout(bubble.view, rect)
-                activeBubbles[id] = bubble.copy(rect = Rect(rect))
-            }
-        } else {
-            createBubble(id, text, rect)
-        }
+    init {
+        setupOverlayView()
     }
 
-    private fun createBubble(id: Int, text: String, rect: Rect) {
-        Log.d("BubbleManager", "createBubble: id=$id, text=$text")
-        val textState = mutableStateOf(text)
-        val composeView = ComposeView(context).apply {
+    private fun setupOverlayView() {
+        overlayView = ComposeView(context).apply {
             setViewTreeLifecycleOwner(lifecycleOwner)
             setViewTreeViewModelStoreOwner(viewModelStoreOwner)
             setViewTreeSavedStateRegistryOwner(savedStateRegistryOwner)
             
             setContent {
                 AutoTranslatorTheme {
-                    val content by textState
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xD9000000), RoundedCornerShape(8.dp))
-                            .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = content,
-                            color = Color(0xFFFBC02D), // Bright yellow text for high visibility
-                            fontSize = 14.sp,
-                            lineHeight = 16.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                    val density = LocalDensity.current
+                    // A single transparent Box covering the entire screen
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        activeBubbles.forEach { (_, bubble) ->
+                            val xPos = with(density) { bubble.rect.left.toDp() }
+                            val yPos = with(density) { bubble.rect.bottom.toDp() }
+
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = xPos, y = yPos + 2.dp)
+                                    .background(Color(0xD9000000), RoundedCornerShape(8.dp))
+                                    .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = bubble.text,
+                                    color = Color(0xFFFBC02D),
+                                    fontSize = 14.sp,
+                                    lineHeight = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
 
-        val params = createLayoutParams(rect)
-        try {
-            windowManager.addView(composeView, params)
-            activeBubbles[id] = BubbleInstance(composeView, textState, Rect(rect))
-        } catch (e: Exception) {}
-    }
-
-    private fun updateViewLayout(view: ComposeView, rect: Rect) {
-        val params = createLayoutParams(rect)
-        try {
-            windowManager.updateViewLayout(view, params)
-        } catch (e: Exception) {}
-    }
-
-    private fun createLayoutParams(rect: Rect): WindowManager.LayoutParams {
-        return WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            // FLAG_NOT_TOUCHABLE ensures users can click "through" the overlay to interact with the screen below
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = rect.left
-            y = rect.bottom + 2
+            x = 0
+            y = 0
         }
+
+        try {
+            windowManager.addView(overlayView, params)
+        } catch (e: Exception) {
+            Log.e("BubbleManager", "Failed to add overlay view", e)
+        }
+    }
+
+    fun updateBubble(id: Int, text: String, rect: Rect) {
+        activeBubbles[id] = BubbleData(text, rect)
     }
 
     fun removeBubblesNotIn(activeIds: Set<Int>) {
-        val toRemove = activeBubbles.keys.filter { it !in activeIds }
-        toRemove.forEach { id ->
-            activeBubbles.remove(id)?.let {
-                try {
-                    windowManager.removeView(it.view)
-                } catch (e: Exception) {}
-            }
-        }
+        activeBubbles.keys.retainAll(activeIds)
     }
 
     fun clearAll() {
-        activeBubbles.values.forEach {
-            try {
-                windowManager.removeView(it.view)
-            } catch (e: Exception) {}
-        }
         activeBubbles.clear()
+    }
+
+    fun destroy() {
+        try {
+            overlayView?.let { windowManager.removeView(it) }
+        } catch (e: Exception) {
+            Log.e("BubbleManager", "Failed to remove overlay view", e)
+        }
     }
 }

@@ -94,6 +94,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private var ocrJob: Job? = null
 
     private val translationCache = mutableMapOf<String, String>()
+    private val pendingTranslations = mutableSetOf<String>()
 
     private val textReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -126,34 +127,40 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     }
 
     private fun translateAndShowBubble(id: Int, text: String, rect: Rect) {
-        Log.d("OverlayService", "translateAndShowBubble: id=$id, text=$text, rect=$rect")
         val cached = translationCache[text]
         if (cached != null) {
-            Log.d("OverlayService", "translateAndShowBubble: Using cached translation for $id")
             bubbleManager.updateBubble(id, cached, rect)
             return
         }
 
+        if (pendingTranslations.contains(text)) {
+            // We are already translating this exact text, just update its position with "..."
+            bubbleManager.updateBubble(id, "...", rect)
+            return
+        }
+
         // Show a placeholder immediately so the user knows OCR found text
+        pendingTranslations.add(text)
         bubbleManager.updateBubble(id, "...", rect)
 
         scope.launch(Dispatchers.IO) {
             try {
                 val repository = ServiceLocator.provideTranslationRepository(this@OverlayTranslationService)
-                Log.d("OverlayService", "translateAndShowBubble: Requesting translation for $id")
                 val result = repository.translateText(text)
                 withContext(Dispatchers.Main) {
+                    pendingTranslations.remove(text)
                     result.onSuccess { translated ->
-                        Log.d("OverlayService", "translateAndShowBubble: Translation success for $id: $translated")
                         translationCache[text] = translated
                         bubbleManager.updateBubble(id, translated, rect)
                     }.onFailure { e ->
-                        Log.e("OverlayService", "translateAndShowBubble: Translation failed for $id", e)
+                        Log.e("OverlayService", "translateAndShowBubble: Translation failed for $text", e)
+                        translationCache[text] = "[Error]"
                         bubbleManager.updateBubble(id, "[Error]", rect)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("OverlayService", "translateAndShowBubble: Exception during translation for $id", e)
+                withContext(Dispatchers.Main) { pendingTranslations.remove(text) }
+                Log.e("OverlayService", "translateAndShowBubble: Exception during translation", e)
             }
         }
     }
@@ -386,6 +393,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                 alphaValue = 1f
                                 if (!isTranslationEnabledState.value) {
                                     bubbleManager.clearAll()
+                                    pendingTranslations.clear() // Prevent stalled requests from popping up
                                 } else {
                                     scope.launch { captureAndProcessFrame() }
                                 }
@@ -417,7 +425,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         triggerView?.let { windowManager.removeView(it) }
-        bubbleManager.clearAll()
+        bubbleManager.destroy()
         LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver)
         ocrJob?.cancel()
         recognizer.close()
