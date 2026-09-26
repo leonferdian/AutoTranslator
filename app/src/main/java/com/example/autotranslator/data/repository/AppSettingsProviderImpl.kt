@@ -21,6 +21,7 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
         private val BUBBLE_SIZE = intPreferencesKey("bubble_size")
         private val OPACITY = intPreferencesKey("opacity")
         private val FONT_SCALE = intPreferencesKey("font_scale")
+        private val DYNAMIC_MODE = booleanPreferencesKey("dynamic_mode")
     }
 
     override fun getApiKey(): Flow<String> = context.dataStore.data.map { it[API_KEY] ?: "" }
@@ -66,5 +67,10 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
     override fun getFontScale(): Flow<Int> = context.dataStore.data.map { it[FONT_SCALE] ?: 16 }
     override suspend fun setFontScale(scale: Int) {
         context.dataStore.edit { it[FONT_SCALE] = scale }
+    }
+
+    override fun getDynamicModeEnabled(): Flow<Boolean> = context.dataStore.data.map { it[DYNAMIC_MODE] ?: false } // Defaults to Static mode
+    override suspend fun setDynamicModeEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[DYNAMIC_MODE] = enabled }
     }
 }

@@ -2,6 +2,7 @@ package com.example.autotranslator.data.repository
 
 import com.example.autotranslator.data.model.*
 import com.example.autotranslator.data.network.GeminiApiService
+import com.example.autotranslator.data.network.GoogleTranslateApiService
 import kotlinx.coroutines.flow.firstOrNull
 import java.io.IOException
 
@@ -49,12 +50,27 @@ class GeminiTranslationEngine(
 }
 
 class GoogleTranslationEngine(
+    private val apiService: GoogleTranslateApiService,
     private val settingsProvider: AppSettingsProvider
 ) : TranslationEngine {
     override suspend fun translate(text: String, sourceLang: String, targetLang: String): Result<String> {
-        // Implementation for Google Cloud Translation REST API
-        // For now, simulating for the refactor structure
-        return Result.success("[Google] $text")
+        val apiKey = settingsProvider.getGoogleApiKey().firstOrNull() ?: ""
+        if (apiKey.isBlank()) return Result.failure(IllegalStateException("Google Translate API key missing"))
+
+        val sourceMap = mapOf("English" to "en", "Thai (ไทย)" to "th", "Indonesian (Bahasa)" to "id", "Japanese (日本語)" to "ja", "Chinese (中文)" to "zh-CN", "Korean (한국어)" to "ko")
+        val sourceCode = if (sourceLang == "Auto-Detect") "" else sourceMap[sourceLang] ?: "en"
+        val targetCode = sourceMap[targetLang] ?: "th"
+
+        return try {
+            val response = apiService.translateText(apiKey, text, sourceCode, targetCode)
+            if (response.isSuccessful) {
+                val translatedText = response.body()?.data?.translations?.firstOrNull()?.translatedText
+                if (!translatedText.isNullOrBlank()) Result.success(translatedText)
+                else Result.failure(Exception("Empty Google Translate response"))
+            } else Result.failure(IOException("Google API Error ${response.code()}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }
 

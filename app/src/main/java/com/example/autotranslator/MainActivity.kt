@@ -73,6 +73,7 @@ fun DashboardScreen() {
     val bubbleSize by settings.getBubbleSize().collectAsState(initial = 64)
     val opacity by settings.getOpacity().collectAsState(initial = 85)
     val fontScale by settings.getFontScale().collectAsState(initial = 16)
+    val isDynamicMode by settings.getDynamicModeEnabled().collectAsState(initial = false)
 
     var isServiceRunning by remember { mutableStateOf(false) }
 
@@ -117,7 +118,9 @@ fun DashboardScreen() {
                     fallbackEnabled = fallbackEnabled,
                     onFallbackEnabledChange = { scope.launch { settings.setFallbackEnabled(it) } },
                     googleApiKey = googleApiKey,
-                    onGoogleApiKeyChange = { scope.launch { settings.setGoogleApiKey(it) } }
+                    onGoogleApiKeyChange = { scope.launch { settings.setGoogleApiKey(it) } },
+                    isDynamicMode = isDynamicMode,
+                    onDynamicModeChange = { scope.launch { settings.setDynamicModeEnabled(it) } }
                 )
             }
 
@@ -338,7 +341,9 @@ fun ApiSetupCard(
     fallbackEnabled: Boolean,
     onFallbackEnabledChange: (Boolean) -> Unit,
     googleApiKey: String,
-    onGoogleApiKeyChange: (String) -> Unit
+    onGoogleApiKeyChange: (String) -> Unit,
+    isDynamicMode: Boolean,
+    onDynamicModeChange: (Boolean) -> Unit
 ) {
     var isVisible by remember { mutableStateOf(false) }
     var isGoogleVisible by remember { mutableStateOf(false) }
@@ -458,6 +463,25 @@ fun ApiSetupCard(
                 Switch(
                     checked = fallbackEnabled,
                     onCheckedChange = onFallbackEnabledChange,
+                    colors = SwitchDefaults.colors(checkedThumbColor = OnPrimary, checkedTrackColor = Primary)
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Capture Mode Switch
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Continuous Mode (Dynamic)", style = Typography.labelMedium, color = OnSurface, fontWeight = FontWeight.Bold)
+                    Text(if (isDynamicMode) "Translates every 1s automatically" else "Manual (Static) - Tap bubble to translate", style = Typography.labelSmall, color = OnSurfaceVariant)
+                }
+                Switch(
+                    checked = isDynamicMode,
+                    onCheckedChange = onDynamicModeChange,
                     colors = SwitchDefaults.colors(checkedThumbColor = OnPrimary, checkedTrackColor = Primary)
                 )
             }

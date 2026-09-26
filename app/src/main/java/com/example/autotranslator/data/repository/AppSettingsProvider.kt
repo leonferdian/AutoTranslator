@@ -29,4 +29,7 @@ interface AppSettingsProvider {
 
     fun getFontScale(): Flow<Int>
     suspend fun setFontScale(scale: Int)
+
+    fun getDynamicModeEnabled(): Flow<Boolean>
+    suspend fun setDynamicModeEnabled(enabled: Boolean)
 }

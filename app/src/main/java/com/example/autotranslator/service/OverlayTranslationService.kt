@@ -86,6 +86,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private val sourceLanguageState = mutableStateOf("Auto-Detect")
     private val targetLanguageState = mutableStateOf("Thai (ไทย)")
     private val translationEngineState = mutableStateOf("Gemini")
+    private val isDynamicModeState = mutableStateOf(false)
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -202,6 +203,9 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         scope.launch {
             settings.getTranslationEngine().collect { translationEngineState.value = it }
         }
+        scope.launch {
+            settings.getDynamicModeEnabled().collect { isDynamicModeState.value = it }
+        }
     }
 
     private fun registerTextReceiver() {
@@ -274,7 +278,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         ocrJob?.cancel()
         ocrJob = scope.launch(Dispatchers.Default) {
             while (isActive) {
-                if (isTranslationEnabledState.value && mediaProjection != null) {
+                if (isTranslationEnabledState.value && mediaProjection != null && isDynamicModeState.value) {
                     captureAndProcessFrame()
                 }
                 delay(1000) // Reduced delay for more dynamic/faster subtitle updates
@@ -431,15 +435,36 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                 )
                             }
                             .clickable {
-                                isTranslationEnabledState.value = !isEnabled
+                                // In Static Mode, clicking triggers exactly ONE capture.
+                                // In Dynamic Mode, clicking toggles the continuous capturing.
                                 lastInteractionTime = System.currentTimeMillis()
                                 alphaValue = 1f
-                                if (!isTranslationEnabledState.value) {
-                                    bubbleManager.clearAll()
-                                    pendingTranslations.clear()
-                                    trackedBlocks.clear()
+                                
+                                if (isDynamicModeState.value) {
+                                    isTranslationEnabledState.value = !isEnabled
+                                    if (!isTranslationEnabledState.value) {
+                                        bubbleManager.clearAll()
+                                        pendingTranslations.clear()
+                                        trackedBlocks.clear()
+                                    } else {
+                                        scope.launch { captureAndProcessFrame() }
+                                    }
                                 } else {
-                                    scope.launch { captureAndProcessFrame() }
+                                    // Static Mode
+                                    if (isEnabled) {
+                                        // If already active, turn it off and clear
+                                        isTranslationEnabledState.value = false
+                                        bubbleManager.clearAll()
+                                        pendingTranslations.clear()
+                                        trackedBlocks.clear()
+                                    } else {
+                                        // Trigger a single shot
+                                        isTranslationEnabledState.value = true
+                                        bubbleManager.clearAll()
+                                        pendingTranslations.clear()
+                                        trackedBlocks.clear()
+                                        scope.launch { captureAndProcessFrame() }
+                                    }
                                 }
                             },
                         contentAlignment = Alignment.Center
