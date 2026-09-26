@@ -56,8 +56,10 @@ class OverlayBubbleManager(
                     // A single transparent Box covering the entire screen
                     Box(modifier = Modifier.fillMaxSize()) {
                         activeBubbles.forEach { (_, bubble) ->
-                            val xPos = with(density) { bubble.rect.left.toDp() }
-                            val yPos = with(density) { bubble.rect.bottom.toDp() }
+                            // Convert physical pixels to Dp correctly using the screen density
+                            val densityScale = density.density
+                            val xPos = (bubble.rect.left / densityScale).dp
+                            val yPos = (bubble.rect.bottom / densityScale).dp
 
                             Box(
                                 modifier = Modifier

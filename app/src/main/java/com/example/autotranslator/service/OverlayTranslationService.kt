@@ -315,7 +315,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                     val newActiveIds = mutableSetOf<Int>()
                     
                     val bubbleAvoidanceRects = bubbleManager.getActiveBubbleRects().map {
-                        Rect(it.left - 20, it.bottom, it.right + 200, it.bottom + 300)
+                        Rect(it.left, it.top, it.right, it.bottom)
                     }
 
                     visionText.textBlocks.forEach { block ->
@@ -328,16 +328,21 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                         }
 
                         val matchedBlock = trackedBlocks.find { 
-                            it.originalText == text || Rect.intersects(it.currentRect, rect)
+                            it.originalText == text || (Rect.intersects(it.currentRect, rect) && 
+                            Math.abs(it.currentRect.centerX() - rect.centerX()) < 50 && 
+                            Math.abs(it.currentRect.centerY() - rect.centerY()) < 50)
                         }
 
                         if (matchedBlock != null) {
-                            matchedBlock.currentRect = rect
+                            // Only update position if it moved significantly (Deadzone of 15 pixels to prevent jitter)
+                            if (Math.abs(matchedBlock.currentRect.left - rect.left) > 15 || 
+                                Math.abs(matchedBlock.currentRect.top - rect.top) > 15) {
+                                matchedBlock.currentRect = rect
+                                bubbleManager.updateBubbleRect(matchedBlock.id, rect)
+                            }
                             matchedBlock.originalText = text
                             matchedBlock.lastSeenTime = now
                             newActiveIds.add(matchedBlock.id)
-                            
-                            bubbleManager.updateBubbleRect(matchedBlock.id, rect)
                         } else {
                             val newId = nextBlockId++
                             trackedBlocks.add(TrackedBlock(newId, text, rect, now))
