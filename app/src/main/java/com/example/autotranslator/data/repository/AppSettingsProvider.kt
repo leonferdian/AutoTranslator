@@ -32,4 +32,7 @@ interface AppSettingsProvider {
 
     fun getDynamicModeEnabled(): Flow<Boolean>
     suspend fun setDynamicModeEnabled(enabled: Boolean)
+
+    fun getCaptureEngine(): Flow<String>
+    suspend fun setCaptureEngine(engine: String)
 }

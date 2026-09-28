@@ -74,6 +74,7 @@ fun DashboardScreen() {
     val opacity by settings.getOpacity().collectAsState(initial = 85)
     val fontScale by settings.getFontScale().collectAsState(initial = 16)
     val isDynamicMode by settings.getDynamicModeEnabled().collectAsState(initial = false)
+    val captureEngine by settings.getCaptureEngine().collectAsState(initial = "Accessibility")
 
     var isServiceRunning by remember { mutableStateOf(false) }
 
@@ -120,7 +121,9 @@ fun DashboardScreen() {
                     googleApiKey = googleApiKey,
                     onGoogleApiKeyChange = { scope.launch { settings.setGoogleApiKey(it) } },
                     isDynamicMode = isDynamicMode,
-                    onDynamicModeChange = { scope.launch { settings.setDynamicModeEnabled(it) } }
+                    onDynamicModeChange = { scope.launch { settings.setDynamicModeEnabled(it) } },
+                    captureEngine = captureEngine,
+                    onCaptureEngineChange = { scope.launch { settings.setCaptureEngine(it) } }
                 )
             }
 
@@ -343,7 +346,9 @@ fun ApiSetupCard(
     googleApiKey: String,
     onGoogleApiKeyChange: (String) -> Unit,
     isDynamicMode: Boolean,
-    onDynamicModeChange: (Boolean) -> Unit
+    onDynamicModeChange: (Boolean) -> Unit,
+    captureEngine: String,
+    onCaptureEngineChange: (String) -> Unit
 ) {
     var isVisible by remember { mutableStateOf(false) }
     var isGoogleVisible by remember { mutableStateOf(false) }
@@ -484,6 +489,52 @@ fun ApiSetupCard(
                     onCheckedChange = onDynamicModeChange,
                     colors = SwitchDefaults.colors(checkedThumbColor = OnPrimary, checkedTrackColor = Primary)
                 )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Capture Engine Option
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Capture Engine", style = Typography.labelMedium, color = OnSurface, fontWeight = FontWeight.Bold)
+                    Text("Select method for reading screen text", style = Typography.labelSmall, color = OnSurfaceVariant)
+                }
+                
+                var showCaptureMenu by remember { mutableStateOf(false) }
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SurfaceContainerHigh)
+                            .clickable { showCaptureMenu = true }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(captureEngine, style = Typography.labelMedium, color = Primary)
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Primary)
+                        }
+                    }
+                    DropdownMenu(expanded = showCaptureMenu, onDismissRequest = { showCaptureMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Accessibility") },
+                            onClick = {
+                                onCaptureEngineChange("Accessibility")
+                                showCaptureMenu = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("MediaProjection") },
+                            onClick = {
+                                onCaptureEngineChange("MediaProjection")
+                                showCaptureMenu = false
+                            }
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(16.dp))

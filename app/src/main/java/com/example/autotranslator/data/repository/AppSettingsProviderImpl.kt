@@ -22,6 +22,7 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
         private val OPACITY = intPreferencesKey("opacity")
         private val FONT_SCALE = intPreferencesKey("font_scale")
         private val DYNAMIC_MODE = booleanPreferencesKey("dynamic_mode")
+        private val CAPTURE_ENGINE = stringPreferencesKey("capture_engine")
     }
 
     override fun getApiKey(): Flow<String> = context.dataStore.data.map { it[API_KEY] ?: "" }
@@ -72,5 +73,10 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
     override fun getDynamicModeEnabled(): Flow<Boolean> = context.dataStore.data.map { it[DYNAMIC_MODE] ?: false } // Defaults to Static mode
     override suspend fun setDynamicModeEnabled(enabled: Boolean) {
         context.dataStore.edit { it[DYNAMIC_MODE] = enabled }
+    }
+
+    override fun getCaptureEngine(): Flow<String> = context.dataStore.data.map { it[CAPTURE_ENGINE] ?: "Accessibility" }
+    override suspend fun setCaptureEngine(engine: String) {
+        context.dataStore.edit { it[CAPTURE_ENGINE] = engine }
     }
 }

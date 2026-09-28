@@ -87,6 +87,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private val targetLanguageState = mutableStateOf("Thai (ไทย)")
     private val translationEngineState = mutableStateOf("Gemini")
     private val isDynamicModeState = mutableStateOf(false)
+    private val captureEngineState = mutableStateOf("Accessibility")
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -110,6 +111,19 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         override fun onReceive(context: Context?, intent: Intent?) {
             if (!isTranslationEnabledState.value) {
                 bubbleManager.clearAll()
+                return
+            }
+
+            if (intent?.action == ScreenAccessibilityService.ACTION_SCREENSHOT_RESULT) {
+                val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(ScreenAccessibilityService.EXTRA_BITMAP, Bitmap::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(ScreenAccessibilityService.EXTRA_BITMAP) as? Bitmap
+                }
+                if (bitmap != null) {
+                    processBitmapOCR(bitmap)
+                }
                 return
             }
 
@@ -206,13 +220,17 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         scope.launch {
             settings.getDynamicModeEnabled().collect { isDynamicModeState.value = it }
         }
+        scope.launch {
+            settings.getCaptureEngine().collect { captureEngineState.value = it }
+        }
     }
 
     private fun registerTextReceiver() {
-        LocalBroadcastManager.getInstance(this).registerReceiver(
-            textReceiver,
-            IntentFilter(ScreenAccessibilityService.ACTION_TEXT_EXTRACTED)
-        )
+        val filter = IntentFilter().apply {
+            addAction(ScreenAccessibilityService.ACTION_TEXT_EXTRACTED)
+            addAction(ScreenAccessibilityService.ACTION_SCREENSHOT_RESULT)
+        }
+        LocalBroadcastManager.getInstance(this).registerReceiver(textReceiver, filter)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -278,8 +296,13 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         ocrJob?.cancel()
         ocrJob = scope.launch(Dispatchers.Default) {
             while (isActive) {
-                if (isTranslationEnabledState.value && mediaProjection != null && isDynamicModeState.value) {
-                    captureAndProcessFrame()
+                if (isTranslationEnabledState.value && isDynamicModeState.value) {
+                    if (captureEngineState.value == "MediaProjection" && mediaProjection != null) {
+                        captureAndProcessFrame()
+                    } else if (captureEngineState.value == "Accessibility") {
+                        val intent = Intent(ScreenAccessibilityService.ACTION_TAKE_SCREENSHOT)
+                        LocalBroadcastManager.getInstance(this@OverlayTranslationService).sendBroadcast(intent)
+                    }
                 }
                 delay(1000) // Reduced delay for more dynamic/faster subtitle updates
             }
@@ -287,88 +310,88 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     }
 
     private fun captureAndProcessFrame() {
-        Log.d("OverlayService", "captureAndProcessFrame: Starting capture")
+        Log.d("OverlayService", "captureAndProcessFrame: Starting MediaProjection capture")
         val image = try { imageReader?.acquireLatestImage() } catch (e: Exception) { 
             Log.e("OverlayService", "captureAndProcessFrame: Failed to acquire image", e)
             null 
         } ?: return
         
         try {
-            Log.d("OverlayService", "captureAndProcessFrame: Image acquired, size: ${image.width}x${image.height}")
             val planes = image.planes
             val buffer: ByteBuffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
             
-            // Fix pixel alignment issue: Buffer has row padding, copyPixelsFromBuffer requires exact match
             val bitmapWidth = rowStride / pixelStride
             val paddedBitmap = Bitmap.createBitmap(bitmapWidth, image.height, Bitmap.Config.ARGB_8888)
             buffer.rewind()
             paddedBitmap.copyPixelsFromBuffer(buffer)
             
-            // Crop out the padding to get the actual screen image
             val bitmap = Bitmap.createBitmap(paddedBitmap, 0, 0, image.width, image.height)
             paddedBitmap.recycle()
             
-            recognizer.process(InputImage.fromBitmap(bitmap, 0))
-                .addOnCompleteListener {
-                    bitmap.recycle()
-                }
-                .addOnSuccessListener { visionText ->
-                    val now = System.currentTimeMillis()
-                    val newActiveIds = mutableSetOf<Int>()
-                    
-                    val bubbleAvoidanceRects = bubbleManager.getActiveBubbleRects().map {
-                        Rect(it.left, it.top, it.right, it.bottom)
-                    }
-
-                    visionText.textBlocks.forEach { block ->
-                        val rect = block.boundingBox ?: return@forEach
-                        val text = block.text
-
-                        val isInsideBubble = bubbleAvoidanceRects.any { it.intersect(rect) || it.contains(rect) }
-                        val isGarbageText = text.length < 2 || !text.any { it.isLetterOrDigit() }
-                        
-                        if (isInsideBubble || text.contains("[Google]") || text == "..." || text == "[Error]" || isGarbageText) {
-                            return@forEach
-                        }
-
-                        val matchedBlock = trackedBlocks.find { 
-                            it.originalText == text || (Rect.intersects(it.currentRect, rect) && 
-                            Math.abs(it.currentRect.centerX() - rect.centerX()) < 50 && 
-                            Math.abs(it.currentRect.centerY() - rect.centerY()) < 50)
-                        }
-
-                        if (matchedBlock != null) {
-                            // Only update position if it moved significantly (Deadzone of 15 pixels to prevent jitter)
-                            if (Math.abs(matchedBlock.currentRect.left - rect.left) > 15 || 
-                                Math.abs(matchedBlock.currentRect.top - rect.top) > 15) {
-                                matchedBlock.currentRect = rect
-                                bubbleManager.updateBubbleRect(matchedBlock.id, rect)
-                            }
-                            matchedBlock.originalText = text
-                            matchedBlock.lastSeenTime = now
-                            newActiveIds.add(matchedBlock.id)
-                        } else {
-                            val newId = nextBlockId++
-                            trackedBlocks.add(TrackedBlock(newId, text, rect, now))
-                            newActiveIds.add(newId)
-                            
-                            translateAndShowBubble(newId, text, rect)
-                        }
-                    }
-                    
-                    trackedBlocks.removeAll { now - it.lastSeenTime > 1500 }
-                    bubbleManager.removeBubblesNotIn(newActiveIds)
-                }
-                .addOnFailureListener { e ->
-                    Log.e("OverlayService", "captureAndProcessFrame: OCR Failed", e)
-                }
+            processBitmapOCR(bitmap)
         } catch (e: Exception) { 
             Log.e("OverlayService", "captureAndProcessFrame: Error during processing", e)
         } finally { 
             image.close() 
         }
+    }
+
+    private fun processBitmapOCR(bitmap: Bitmap) {
+        recognizer.process(InputImage.fromBitmap(bitmap, 0))
+            .addOnCompleteListener {
+                bitmap.recycle()
+            }
+            .addOnSuccessListener { visionText ->
+                val now = System.currentTimeMillis()
+                val newActiveIds = mutableSetOf<Int>()
+                
+                val bubbleAvoidanceRects = bubbleManager.getActiveBubbleRects().map {
+                    Rect(it.left, it.top, it.right, it.bottom)
+                }
+
+                visionText.textBlocks.forEach { block ->
+                    val rect = block.boundingBox ?: return@forEach
+                    val text = block.text
+
+                    val isInsideBubble = bubbleAvoidanceRects.any { it.intersect(rect) || it.contains(rect) }
+                    val isGarbageText = text.length < 2 || !text.any { it.isLetterOrDigit() }
+                    
+                    if (isInsideBubble || text.contains("[Google]") || text == "..." || text == "[Error]" || isGarbageText) {
+                        return@forEach
+                    }
+
+                    val matchedBlock = trackedBlocks.find { 
+                        it.originalText == text || (Rect.intersects(it.currentRect, rect) && 
+                        Math.abs(it.currentRect.centerX() - rect.centerX()) < 50 && 
+                        Math.abs(it.currentRect.centerY() - rect.centerY()) < 50)
+                    }
+
+                    if (matchedBlock != null) {
+                        if (Math.abs(matchedBlock.currentRect.left - rect.left) > 15 || 
+                            Math.abs(matchedBlock.currentRect.top - rect.top) > 15) {
+                            matchedBlock.currentRect = rect
+                            bubbleManager.updateBubbleRect(matchedBlock.id, rect)
+                        }
+                        matchedBlock.originalText = text
+                        matchedBlock.lastSeenTime = now
+                        newActiveIds.add(matchedBlock.id)
+                    } else {
+                        val newId = nextBlockId++
+                        trackedBlocks.add(TrackedBlock(newId, text, rect, now))
+                        newActiveIds.add(newId)
+                        
+                        translateAndShowBubble(newId, text, rect)
+                    }
+                }
+                
+                trackedBlocks.removeAll { now - it.lastSeenTime > 1500 }
+                bubbleManager.removeBubblesNotIn(newActiveIds)
+            }
+            .addOnFailureListener { e ->
+                Log.e("OverlayService", "processBitmapOCR: OCR Failed", e)
+            }
     }
 
     private fun showSideTrigger() {
@@ -447,7 +470,14 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                         pendingTranslations.clear()
                                         trackedBlocks.clear()
                                     } else {
-                                        scope.launch { captureAndProcessFrame() }
+                                        scope.launch { 
+                                            if (captureEngineState.value == "MediaProjection") {
+                                                captureAndProcessFrame() 
+                                            } else {
+                                                val intent = Intent(ScreenAccessibilityService.ACTION_TAKE_SCREENSHOT)
+                                                LocalBroadcastManager.getInstance(this@OverlayTranslationService).sendBroadcast(intent)
+                                            }
+                                        }
                                     }
                                 } else {
                                     // Static Mode
@@ -463,7 +493,14 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                         bubbleManager.clearAll()
                                         pendingTranslations.clear()
                                         trackedBlocks.clear()
-                                        scope.launch { captureAndProcessFrame() }
+                                        scope.launch { 
+                                            if (captureEngineState.value == "MediaProjection") {
+                                                captureAndProcessFrame() 
+                                            } else {
+                                                val intent = Intent(ScreenAccessibilityService.ACTION_TAKE_SCREENSHOT)
+                                                LocalBroadcastManager.getInstance(this@OverlayTranslationService).sendBroadcast(intent)
+                                            }
+                                        }
                                     }
                                 }
                             },
