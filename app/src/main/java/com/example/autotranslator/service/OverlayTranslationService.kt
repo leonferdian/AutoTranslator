@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Base64
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
@@ -53,10 +54,10 @@ import androidx.savedstate.*
 import com.example.autotranslator.data.ServiceLocator
 import com.example.autotranslator.ui.overlay.OverlayBubbleManager
 import com.example.autotranslator.ui.theme.*
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.example.autotranslator.data.network.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.firstOrNull
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
 class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
@@ -92,7 +93,6 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private var ocrJob: Job? = null
 
     private val translationCache = mutableMapOf<String, String>()
@@ -122,7 +122,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                     intent.getParcelableExtra(ScreenAccessibilityService.EXTRA_BITMAP) as? Bitmap
                 }
                 if (bitmap != null) {
-                    processBitmapOCR(bitmap)
+                    processBitmapCloudVision(bitmap)
                 }
                 return
             }
@@ -330,7 +330,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
             val bitmap = Bitmap.createBitmap(paddedBitmap, 0, 0, image.width, image.height)
             paddedBitmap.recycle()
             
-            processBitmapOCR(bitmap)
+            processBitmapCloudVision(bitmap)
         } catch (e: Exception) { 
             Log.e("OverlayService", "captureAndProcessFrame: Error during processing", e)
         } finally { 
@@ -338,60 +338,98 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         }
     }
 
-    private fun processBitmapOCR(bitmap: Bitmap) {
-        recognizer.process(InputImage.fromBitmap(bitmap, 0))
-            .addOnCompleteListener {
-                bitmap.recycle()
-            }
-            .addOnSuccessListener { visionText ->
-                val now = System.currentTimeMillis()
-                val newActiveIds = mutableSetOf<Int>()
+    private fun processBitmapCloudVision(bitmap: Bitmap) {
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
+        val byteArray = stream.toByteArray()
+        val base64Image = Base64.encodeToString(byteArray, Base64.DEFAULT)
+        bitmap.recycle()
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                val settings = ServiceLocator.provideAppSettings(this@OverlayTranslationService)
+                val apiKey = settings.getGoogleApiKey().firstOrNull() ?: ""
                 
-                val bubbleAvoidanceRects = bubbleManager.getActiveBubbleRects().map {
-                    Rect(it.left, it.top, it.right, it.bottom)
+                if (apiKey.isBlank()) {
+                    Log.e("OverlayService", "Missing Google Cloud Vision API Key")
+                    return@launch
                 }
 
-                visionText.textBlocks.forEach { block ->
-                    val rect = block.boundingBox ?: return@forEach
-                    val text = block.text
+                val visionApi = ServiceLocator.provideGoogleVisionApi()
+                val request = VisionRequest(
+                    listOf(AnnotateImageRequest(VisionImage(base64Image), listOf(VisionFeature())))
+                )
 
-                    val isInsideBubble = bubbleAvoidanceRects.any { it.intersect(rect) || it.contains(rect) }
-                    val isGarbageText = text.length < 2 || !text.any { it.isLetterOrDigit() }
+                val response = visionApi.annotateImage(apiKey, request)
+                if (response.isSuccessful) {
+                    val annotations = response.body()?.responses?.firstOrNull()?.textAnnotations
+                    if (annotations != null && annotations.size > 1) {
+                        val blocks = annotations.drop(1)
+                        processCloudVisionBlocks(blocks)
+                    }
+                } else {
+                    Log.e("OverlayService", "Cloud Vision API Error: ${response.code()} ${response.errorBody()?.string()}")
+                }
+            } catch (e: Exception) {
+                Log.e("OverlayService", "Exception calling Cloud Vision", e)
+            }
+        }
+    }
+
+    private fun processCloudVisionBlocks(blocks: List<TextAnnotation>) {
+        val now = System.currentTimeMillis()
+        val newActiveIds = mutableSetOf<Int>()
+        
+        scope.launch(Dispatchers.Main) {
+            val bubbleAvoidanceRects = bubbleManager.getActiveBubbleRects().map {
+                Rect(it.left, it.top, it.right, it.bottom)
+            }
+
+            blocks.forEach { block ->
+                val text = block.description ?: return@forEach
+                val vertices = block.boundingPoly?.vertices ?: return@forEach
+                if (vertices.size < 4) return@forEach
+
+                val minX = vertices.minOfOrNull { it.x ?: 0 } ?: 0
+                val minY = vertices.minOfOrNull { it.y ?: 0 } ?: 0
+                val maxX = vertices.maxOfOrNull { it.x ?: 0 } ?: 0
+                val maxY = vertices.maxOfOrNull { it.y ?: 0 } ?: 0
+                val rect = Rect(minX, minY, maxX, maxY)
+
+                val isInsideBubble = bubbleAvoidanceRects.any { it.intersect(rect) || it.contains(rect) }
+                val isGarbageText = text.length < 2 || !text.any { it.isLetterOrDigit() }
+                
+                if (isInsideBubble || text.contains("[Google]") || text == "..." || text == "[Error]" || isGarbageText) {
+                    return@forEach
+                }
+
+                val matchedBlock = trackedBlocks.find { 
+                    it.originalText == text || (Rect.intersects(it.currentRect, rect) && 
+                    Math.abs(it.currentRect.centerX() - rect.centerX()) < 50 && 
+                    Math.abs(it.currentRect.centerY() - rect.centerY()) < 50)
+                }
+
+                if (matchedBlock != null) {
+                    if (Math.abs(matchedBlock.currentRect.left - rect.left) > 15 || 
+                        Math.abs(matchedBlock.currentRect.top - rect.top) > 15) {
+                        matchedBlock.currentRect = rect
+                        bubbleManager.updateBubbleRect(matchedBlock.id, rect)
+                    }
+                    matchedBlock.originalText = text
+                    matchedBlock.lastSeenTime = now
+                    newActiveIds.add(matchedBlock.id)
+                } else {
+                    val newId = nextBlockId++
+                    trackedBlocks.add(TrackedBlock(newId, text, rect, now))
+                    newActiveIds.add(newId)
                     
-                    if (isInsideBubble || text.contains("[Google]") || text == "..." || text == "[Error]" || isGarbageText) {
-                        return@forEach
-                    }
-
-                    val matchedBlock = trackedBlocks.find { 
-                        it.originalText == text || (Rect.intersects(it.currentRect, rect) && 
-                        Math.abs(it.currentRect.centerX() - rect.centerX()) < 50 && 
-                        Math.abs(it.currentRect.centerY() - rect.centerY()) < 50)
-                    }
-
-                    if (matchedBlock != null) {
-                        if (Math.abs(matchedBlock.currentRect.left - rect.left) > 15 || 
-                            Math.abs(matchedBlock.currentRect.top - rect.top) > 15) {
-                            matchedBlock.currentRect = rect
-                            bubbleManager.updateBubbleRect(matchedBlock.id, rect)
-                        }
-                        matchedBlock.originalText = text
-                        matchedBlock.lastSeenTime = now
-                        newActiveIds.add(matchedBlock.id)
-                    } else {
-                        val newId = nextBlockId++
-                        trackedBlocks.add(TrackedBlock(newId, text, rect, now))
-                        newActiveIds.add(newId)
-                        
-                        translateAndShowBubble(newId, text, rect)
-                    }
+                    translateAndShowBubble(newId, text, rect)
                 }
-                
-                trackedBlocks.removeAll { now - it.lastSeenTime > 1500 }
-                bubbleManager.removeBubblesNotIn(newActiveIds)
             }
-            .addOnFailureListener { e ->
-                Log.e("OverlayService", "processBitmapOCR: OCR Failed", e)
-            }
+            
+            trackedBlocks.removeAll { now - it.lastSeenTime > 1500 }
+            bubbleManager.removeBubblesNotIn(newActiveIds)
+        }
     }
 
     private fun showSideTrigger() {
@@ -534,7 +572,6 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
         bubbleManager.destroy()
         LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver)
         ocrJob?.cancel()
-        recognizer.close()
         mediaProjection?.stop()
         virtualDisplay?.release()
         scope.cancel()

@@ -3,6 +3,7 @@ package com.example.autotranslator.data
 import android.content.Context
 import com.example.autotranslator.data.network.GeminiApiService
 import com.example.autotranslator.data.network.GoogleTranslateApiService
+import com.example.autotranslator.data.network.GoogleVisionApiService
 import com.example.autotranslator.data.repository.*
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -13,6 +14,7 @@ object ServiceLocator {
     private var appSettingsProvider: AppSettingsProvider? = null
     private var geminiApiService: GeminiApiService? = null
     private var googleApiService: GoogleTranslateApiService? = null
+    private var googleVisionApiService: GoogleVisionApiService? = null
     private var translationRepository: TranslationRepository? = null
 
     fun provideAppSettings(context: Context): AppSettingsProvider {
@@ -61,6 +63,27 @@ object ServiceLocator {
 
             val instance = retrofit.create(GoogleTranslateApiService::class.java)
             googleApiService = instance
+            instance
+        }
+    }
+
+    fun provideGoogleVisionApi(): GoogleVisionApiService {
+        return googleVisionApiService ?: synchronized(this) {
+            val logging = HttpLoggingInterceptor().apply {
+                level = HttpLoggingInterceptor.Level.BODY
+            }
+            val client = OkHttpClient.Builder()
+                .addInterceptor(logging)
+                .build()
+
+            val retrofit = Retrofit.Builder()
+                .baseUrl("https://vision.googleapis.com/")
+                .addConverterFactory(GsonConverterFactory.create())
+                .client(client)
+                .build()
+
+            val instance = retrofit.create(GoogleVisionApiService::class.java)
+            googleVisionApiService = instance
             instance
         }
     }
