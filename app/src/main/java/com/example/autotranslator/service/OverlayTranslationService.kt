@@ -340,95 +340,34 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
 
     private fun processBitmapCloudVision(bitmap: Bitmap) {
         val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream) // Compress slightly to reduce payload size
         val byteArray = stream.toByteArray()
         val base64Image = Base64.encodeToString(byteArray, Base64.DEFAULT)
         bitmap.recycle()
 
         scope.launch(Dispatchers.IO) {
             try {
-                val settings = ServiceLocator.provideAppSettings(this@OverlayTranslationService)
-                val apiKey = settings.getGoogleApiKey().firstOrNull() ?: ""
+                val repository = ServiceLocator.provideTranslationRepository(this@OverlayTranslationService)
+                val result = repository.translateImage(base64Image)
                 
-                if (apiKey.isBlank()) {
-                    Log.e("OverlayService", "Missing Google Cloud Vision API Key")
-                    return@launch
-                }
-
-                val visionApi = ServiceLocator.provideGoogleVisionApi()
-                val request = VisionRequest(
-                    listOf(AnnotateImageRequest(VisionImage(base64Image), listOf(VisionFeature())))
-                )
-
-                val response = visionApi.annotateImage(apiKey, request)
-                if (response.isSuccessful) {
-                    val annotations = response.body()?.responses?.firstOrNull()?.textAnnotations
-                    if (annotations != null && annotations.size > 1) {
-                        val blocks = annotations.drop(1)
-                        processCloudVisionBlocks(blocks)
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { translations ->
+                        val newActiveIds = mutableSetOf<Int>()
+                        translations.forEach { item ->
+                            // Use coordinate hash as unique ID for static mode
+                            val id = (item.top.toString() + item.left.toString()).hashCode()
+                            newActiveIds.add(id)
+                            val rect = Rect(item.left, item.top, item.right, item.bottom)
+                            bubbleManager.updateBubble(id, item.translatedText, rect)
+                        }
+                        bubbleManager.removeBubblesNotIn(newActiveIds)
+                    }.onFailure { e ->
+                        Log.e("OverlayService", "Gemini Vision OCR Failed", e)
                     }
-                } else {
-                    Log.e("OverlayService", "Cloud Vision API Error: ${response.code()} ${response.errorBody()?.string()}")
                 }
             } catch (e: Exception) {
-                Log.e("OverlayService", "Exception calling Cloud Vision", e)
+                Log.e("OverlayService", "Exception calling Gemini Vision", e)
             }
-        }
-    }
-
-    private fun processCloudVisionBlocks(blocks: List<TextAnnotation>) {
-        val now = System.currentTimeMillis()
-        val newActiveIds = mutableSetOf<Int>()
-        
-        scope.launch(Dispatchers.Main) {
-            val bubbleAvoidanceRects = bubbleManager.getActiveBubbleRects().map {
-                Rect(it.left, it.top, it.right, it.bottom)
-            }
-
-            blocks.forEach { block ->
-                val text = block.description ?: return@forEach
-                val vertices = block.boundingPoly?.vertices ?: return@forEach
-                if (vertices.size < 4) return@forEach
-
-                val minX = vertices.minOfOrNull { it.x ?: 0 } ?: 0
-                val minY = vertices.minOfOrNull { it.y ?: 0 } ?: 0
-                val maxX = vertices.maxOfOrNull { it.x ?: 0 } ?: 0
-                val maxY = vertices.maxOfOrNull { it.y ?: 0 } ?: 0
-                val rect = Rect(minX, minY, maxX, maxY)
-
-                val isInsideBubble = bubbleAvoidanceRects.any { it.intersect(rect) || it.contains(rect) }
-                val isGarbageText = text.length < 2 || !text.any { it.isLetterOrDigit() }
-                
-                if (isInsideBubble || text.contains("[Google]") || text == "..." || text == "[Error]" || isGarbageText) {
-                    return@forEach
-                }
-
-                val matchedBlock = trackedBlocks.find { 
-                    it.originalText == text || (Rect.intersects(it.currentRect, rect) && 
-                    Math.abs(it.currentRect.centerX() - rect.centerX()) < 50 && 
-                    Math.abs(it.currentRect.centerY() - rect.centerY()) < 50)
-                }
-
-                if (matchedBlock != null) {
-                    if (Math.abs(matchedBlock.currentRect.left - rect.left) > 15 || 
-                        Math.abs(matchedBlock.currentRect.top - rect.top) > 15) {
-                        matchedBlock.currentRect = rect
-                        bubbleManager.updateBubbleRect(matchedBlock.id, rect)
-                    }
-                    matchedBlock.originalText = text
-                    matchedBlock.lastSeenTime = now
-                    newActiveIds.add(matchedBlock.id)
-                } else {
-                    val newId = nextBlockId++
-                    trackedBlocks.add(TrackedBlock(newId, text, rect, now))
-                    newActiveIds.add(newId)
-                    
-                    translateAndShowBubble(newId, text, rect)
-                }
-            }
-            
-            trackedBlocks.removeAll { now - it.lastSeenTime > 1500 }
-            bubbleManager.removeBubblesNotIn(newActiveIds)
         }
     }
 

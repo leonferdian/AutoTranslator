@@ -3,6 +3,8 @@ package com.example.autotranslator.data.repository
 import com.example.autotranslator.data.model.*
 import com.example.autotranslator.data.network.GeminiApiService
 import com.example.autotranslator.data.network.GoogleTranslateApiService
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.firstOrNull
 import java.io.IOException
 
@@ -10,7 +12,16 @@ enum class EngineType { GEMINI, GOOGLE }
 
 interface TranslationEngine {
     suspend fun translate(text: String, sourceLang: String, targetLang: String): Result<String>
+    suspend fun translateImage(base64Image: String, sourceLang: String, targetLang: String): Result<List<ImageTranslationResult>>
 }
+
+data class ImageTranslationResult(
+    val translatedText: String,
+    val top: Int,
+    val left: Int,
+    val bottom: Int,
+    val right: Int
+)
 
 class GeminiTranslationEngine(
     private val apiService: GeminiApiService,
@@ -28,7 +39,7 @@ class GeminiTranslationEngine(
 
         val request = GeminiRequest(
             contents = listOf(Content(listOf(Part(text = text)))),
-            systemInstruction = SystemInstruction(
+            systemInstruction = Content(
                 parts = listOf(
                     Part(text = "You are a live translator. $prompt Do NOT add intros. Output ONLY raw translated text.")
                 )
@@ -42,6 +53,48 @@ class GeminiTranslationEngine(
                 val candidateText = response.body()?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 if (!candidateText.isNullOrBlank()) Result.success(candidateText.trim())
                 else Result.failure(Exception("Empty Gemini response"))
+            } else Result.failure(IOException("Gemini API Error ${response.code()}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun translateImage(base64Image: String, sourceLang: String, targetLang: String): Result<List<ImageTranslationResult>> {
+        val apiKey = settingsProvider.getApiKey().firstOrNull() ?: ""
+        if (apiKey.isBlank()) return Result.failure(IllegalStateException("Gemini API key missing"))
+
+        val prompt = "Look at this image. Find all the $sourceLang text blocks in it. Translate them to $targetLang. " +
+                "Return a JSON array where each object has 'translatedText' containing the translation, and 'top', 'left', 'bottom', 'right' integer values representing the bounding box coordinates of the original text in the image. " +
+                "Only return the raw JSON array, nothing else."
+
+        val request = GeminiRequest(
+            contents = listOf(
+                Content(
+                    parts = listOf(
+                        Part(text = prompt),
+                        Part(inlineData = InlineData(mimeType = "image/jpeg", data = base64Image))
+                    )
+                )
+            ),
+            generationConfig = GenerationConfig(
+                temperature = 0.1f,
+                responseMimeType = "application/json"
+            )
+        )
+
+        return try {
+            val response = apiService.generateContent(apiKey, request)
+            if (response.isSuccessful) {
+                val candidateText = response.body()?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                if (!candidateText.isNullOrBlank()) {
+                    try {
+                        val type = object : TypeToken<List<ImageTranslationResult>>() {}.type
+                        val results: List<ImageTranslationResult> = Gson().fromJson(candidateText, type)
+                        Result.success(results)
+                    } catch (e: Exception) {
+                        Result.failure(Exception("Failed to parse Gemini JSON: $candidateText", e))
+                    }
+                } else Result.failure(Exception("Empty Gemini response"))
             } else Result.failure(IOException("Gemini API Error ${response.code()}"))
         } catch (e: Exception) {
             Result.failure(e)
@@ -72,10 +125,15 @@ class GoogleTranslationEngine(
             Result.failure(e)
         }
     }
+
+    override suspend fun translateImage(base64Image: String, sourceLang: String, targetLang: String): Result<List<ImageTranslationResult>> {
+        return Result.failure(UnsupportedOperationException("Google Translate API does not support direct image translation in this app. Use Gemini."))
+    }
 }
 
 interface TranslationRepository {
     suspend fun translateText(text: String): Result<String>
+    suspend fun translateImage(base64Image: String): Result<List<ImageTranslationResult>>
 }
 
 class TranslationRepositoryImpl(
@@ -99,5 +157,13 @@ class TranslationRepositoryImpl(
         }
         
         return googleEngine.translate(text, sourceLang, targetLang)
+    }
+
+    override suspend fun translateImage(base64Image: String): Result<List<ImageTranslationResult>> {
+        val sourceLang = settingsProvider.getSourceLanguage().firstOrNull() ?: "Auto-Detect"
+        val targetLang = settingsProvider.getTargetLanguage().firstOrNull() ?: "Thai (ไทย)"
+        
+        // Always route image translation to Gemini since Google Translate REST doesn't support it
+        return geminiEngine.translateImage(base64Image, sourceLang, targetLang)
     }
 }
