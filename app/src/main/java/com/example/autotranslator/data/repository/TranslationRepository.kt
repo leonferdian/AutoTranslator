@@ -88,8 +88,10 @@ class GeminiTranslationEngine(
                 val candidateText = response.body()?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 if (!candidateText.isNullOrBlank()) {
                     try {
+                        // Gemini often returns JSON wrapped in markdown code blocks even with responseMimeType="application/json"
+                        val jsonText = candidateText.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
                         val type = object : TypeToken<List<ImageTranslationResult>>() {}.type
-                        val results: List<ImageTranslationResult> = Gson().fromJson(candidateText, type)
+                        val results: List<ImageTranslationResult> = Gson().fromJson(jsonText, type)
                         Result.success(results)
                     } catch (e: Exception) {
                         Result.failure(Exception("Failed to parse Gemini JSON: $candidateText", e))

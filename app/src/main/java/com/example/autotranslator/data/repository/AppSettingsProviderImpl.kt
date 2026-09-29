@@ -75,7 +75,7 @@ class AppSettingsProviderImpl(private val context: Context) : AppSettingsProvide
         context.dataStore.edit { it[DYNAMIC_MODE] = enabled }
     }
 
-    override fun getCaptureEngine(): Flow<String> = context.dataStore.data.map { it[CAPTURE_ENGINE] ?: "Accessibility" }
+    override fun getCaptureEngine(): Flow<String> = context.dataStore.data.map { it[CAPTURE_ENGINE] ?: "MediaProjection" }
     override suspend fun setCaptureEngine(engine: String) {
         context.dataStore.edit { it[CAPTURE_ENGINE] = engine }
     }

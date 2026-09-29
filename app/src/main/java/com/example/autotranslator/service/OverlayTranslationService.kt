@@ -88,7 +88,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
     private val targetLanguageState = mutableStateOf("Thai (ไทย)")
     private val translationEngineState = mutableStateOf("Gemini")
     private val isDynamicModeState = mutableStateOf(false)
-    private val captureEngineState = mutableStateOf("Accessibility")
+    private val captureEngineState = mutableStateOf("MediaProjection")
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -435,6 +435,7 @@ class OverlayTranslationService : Service(), LifecycleOwner, ViewModelStoreOwner
                                 )
                             }
                             .clickable {
+                                Log.d("OverlayService", "Trigger view clicked! isDynamicMode=${isDynamicModeState.value}, isEnabled=$isEnabled, captureEngine=${captureEngineState.value}")
                                 // In Static Mode, clicking triggers exactly ONE capture.
                                 // In Dynamic Mode, clicking toggles the continuous capturing.
                                 lastInteractionTime = System.currentTimeMillis()
